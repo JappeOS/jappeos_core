@@ -4,9 +4,12 @@
 #include <cstring>
 #include <pwd.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
+#include <linux/vt.h>
 #include <cstdint>
 #include <chrono>
 #include <atomic>
+#include <fcntl.h>
 
 #include "../service.h"
 
@@ -54,12 +57,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         bool HandleMethodCall(DBusConnection* conn, DBusMessage* msg) override;
         std::string GetName() override { return "SessionManagerService"; }
 
+        [[nodiscard]] bool IsLiveEnvironment() const { return _isLiveEnvironment; }
+        [[nodiscard]] int GetLiveEnvironmentInstallerPID() const { return _liveInstallerPID; }
+
     public:
         const char* PAM_GREETER_SERVICE = "jappeos-greeter";
         const char* JOS_DESKTOP_BINARY = "/jappeos/desktop";
         const char* JOS_DESKTOP_NAME = "JappeOS Desktop";
         const char* JOS_GREETER_BINARY = "/jappeos/greeter";
         const char* JOS_GREETER_USER = "jos-greeter";
+        const char* JOS_INSTALLER_BINARY = "/jappeos/installer";
 
     private:
         bool CreateLoginSession();
@@ -70,17 +77,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                          const std::string& sessionId,
                                          uid_t uid,
                                          const std::string& seat) const;
-        bool AuthenticateAndOpenPAMSession(const std::string& username, const std::string& password, pam_handle_t** out_pamh) const;
+        bool AuthenticateAndOpenPAMSession(const std::string& username, const std::string& password, pam_handle_t** out_pamh);
         bool SpawnUserSessionProcesses(bool isLoginSession, const std::string& username, const std::string& sessionId, const std::string& seat, std::string& outServiceName) const;
         bool StopSession(DBusConnection* conn, DBusMessage* msg, uid_t callerUid, const std::string& sessionId);
         bool TerminateUserSessionProcesses(const std::string& sessionId);
         bool PolkitAuthorizeStop(uid_t callerUid, const std::string& sessionId);
         bool ListSessions(DBusConnection* conn, DBusMessage* msg, uid_t callerUid) const;
         [[nodiscard]] bool IsGreeter(uid_t callerUid) const;
-        [[nodiscard]] std::string QueryLogindSessionForUid(uid_t uid) const;
-        [[nodiscard]] std::string QueryLogindSeatForSession(const std::string& sessionId) const;
-        [[nodiscard]] bool ActivateLogindSession(const std::string& sessionId) const;
+        [[nodiscard]] std::string QueryLogindSessionForUid(uid_t uid, std::string& outObjectPath) const;
+        [[nodiscard]] std::string QueryLogindSeatForSession(const std::string& sessionId, const std::string& sessionObjectPath) const;
+        [[nodiscard]] bool ActivateLogindSession(const std::string& sessionId, const std::string& seat) const;
         [[nodiscard]] std::string GenerateFallbackSessionId() const;
+        int FindFreeTTY();
 
     private:
         std::map<std::string, pam_handle_t*> _activePAMHandles;
@@ -88,5 +96,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::string _greeterSessionID;
         SessionInfo _greeterSession;
         bool _isGreeterActive = false;
+        bool _isLiveEnvironment;
+        int _liveInstallerPID;
     };
 }

@@ -527,6 +527,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         pam_handle_t* pamh = nullptr;
 
         // --- 1) Lookup UID ---
+        logger->Debug("PRE getpwnam"); // TODO: REM
         pwd = getpwnam(JOS_GREETER_USER);
         if (!pwd)
         {
@@ -553,6 +554,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             }
         };
 
+        logger->Debug("PRE AuthenticateAndOpenPAMSession"); // TODO: REM
         if (!AuthenticateAndOpenPAMSession(JOS_GREETER_USER, "", &pamh)) // pamh is nullptr
         {
             logger->Err("Failed to open PAM session for greeter");
@@ -560,32 +562,37 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
         pamOpened = true;
 
-        // --- 3) logind session ---
-        std::string sessionId = QueryLogindSessionForUid(_greeterSession.uid);
+        // --- 3) Session ID ---
+        logger->Debug("PRE QueryLogindSessionForUid"); // TODO: REM
+        std::string objectPath;
+        const std::string sessionId = QueryLogindSessionForUid(pwd->pw_uid, objectPath);
         if (sessionId.empty())
         {
-            logger->Err("No logind session found for greeter UID: " + std::to_string(_greeterSession.uid));
-            cleanupPam();
-            return false;
-        }
-        if (!ActivateLogindSession(sessionId))
-        {
-            logger->Err("Failed to activate logind session: " + sessionId);
+            logger->Err("No logind session found for greeter UID: " + std::to_string(pwd->pw_uid));
             cleanupPam();
             return false;
         }
 
         // --- 4) Query seat ---
-        std::string seat = QueryLogindSeatForSession(sessionId);
+        logger->Debug("PRE QueryLogindSeatForSession"); // TODO: REM
+        std::string seat = QueryLogindSeatForSession(sessionId, objectPath);
         if (seat.empty())
         {
             logger->Warn("No seat found for session " + sessionId);
             seat = "seat0"; // safe fallback
         }
 
-        // --- 5) Spawn compositor/login UI ---
+        // --- 5) logind session ---
+        if (!ActivateLogindSession(sessionId, seat))
+        {
+            logger->Err("Failed to activate logind session: " + sessionId);
+            cleanupPam();
+            return false;
+        }
+
+        // --- 6) Spawn compositor/login UI ---
         std::string scopeName;
-        if (!SpawnUserSessionProcesses(true, JOS_GREETER_USER, sessionId, seat, scopeName)) // TODO: Maybe stop systemd scope if errors after this point occur
+        if (!SpawnUserSessionProcesses(true, JOS_GREETER_USER, sessionId, seat, scopeName))
         {
             logger->Err(std::string("Failed to spawn user session for ") + JOS_GREETER_USER);
             cleanupPam();
@@ -595,17 +602,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         if (scopeName.empty())
         {
             logger->Err(std::string("SpawnUserSessionProcesses returned empty scopeName for ") + JOS_GREETER_USER);
+            TerminateUserSessionProcesses(sessionId);
             cleanupPam();
-            return true;
+            return false;
         }
 
-        // --- 6) Set current _greeterSession value ---
+        // --- 7) Set current _greeterSession value ---
         _greeterSessionID = sessionId;
         _greeterSession = { JOS_GREETER_USER, scopeName, static_cast<uid_t>(pwd->pw_uid), pamh };
         pamh = nullptr;
         pamOpened = false;
 
-        // --- 7) Return success ---
+        // --- 8) Return success ---
         logger->Info("Greeter session initialized successfully");
         cleanupPam();
         _isGreeterActive = true;
@@ -904,22 +912,29 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
         pamOpened = true;
 
-        // --- 4) logind session ---
-        std::string sessionId = QueryLogindSessionForUid(uid);
+        // --- 4) Session ID ---
+        std::string objectPath;
+        const std::string sessionId = QueryLogindSessionForUid(pwd->pw_uid, objectPath);
         if (sessionId.empty())
         {
-            logger->Warn("No logind session for user " + username + ", generating fallback");
-            sessionId = GenerateFallbackSessionId(); // if this is unsafe, better to fail hard
-            if (sessionId.empty())
-            {
-                cleanupPam();
-                SendErrorReply(conn, msg, DBUS_ERROR_FAILED, "Could not determine session ID");
-                return true;
-            }
+            logger->Err("No logind session found for greeter UID: " + std::to_string(pwd->pw_uid));
+            cleanupPam();
+            SendErrorReply(conn, msg, DBUS_ERROR_FAILED, "Could not determine session ID");
+            return true;
         }
-        else if (!ActivateLogindSession(sessionId))
+
+        // --- 5) Query seat ---
+        std::string seat = QueryLogindSeatForSession(sessionId, objectPath);
+        if (seat.empty())
         {
-            logger->Warn("Failed to activate logind session " + sessionId);
+            logger->Warn("No seat found for session " + sessionId);
+            seat = "seat0"; // safe fallback
+        }
+
+        // --- 6) logind session ---
+        if (!ActivateLogindSession(sessionId, seat))
+        {
+            logger->Err("Failed to activate logind session: " + sessionId);
             cleanupPam();
             SendErrorReply(conn, msg, DBUS_ERROR_FAILED, "Failed to activate session");
             return true;
@@ -934,17 +949,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return true;
         }
 
-        // --- 5) Query seat ---
-        std::string seat = QueryLogindSeatForSession(sessionId);
-        if (seat.empty())
-        {
-            logger->Warn("No seat found for session " + sessionId);
-            seat = "seat0"; // safe fallback
-        }
-
-        // --- 6) Spawn compositor/desktop ---
+        // --- 7) Spawn compositor/desktop ---
         std::string scopeName;
-        if (!SpawnUserSessionProcesses(false, username, sessionId, seat, scopeName)) // TODO: Maybe stop systemd scope if errors after this point occur
+        if (!SpawnUserSessionProcesses(false, username, sessionId, seat, scopeName))
         {
             logger->Err("Failed to spawn user session for " + username);
             cleanupPam();
@@ -955,18 +962,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         if (scopeName.empty())
         {
             logger->Err("SpawnUserSessionProcesses returned empty scopeName for " + username);
+            TerminateUserSessionProcesses(sessionId);
             cleanupPam();
             SendErrorReply(conn, msg, DBUS_ERROR_FAILED, "Invalid session scope");
             return true;
         }
 
-        // --- 7) Insert into session map ---
+        // --- 8) Insert into session map ---
         _sessions[sessionId] = { username, scopeName, uid, pamh, seat };
         // ownership of pamh now belongs to _sessions entry
         pamh = nullptr;
         pamOpened = false;
 
-        // --- 8) Manage greeter ---
+        // --- 9) Manage greeter ---
         if (_sessions.size() > 1 && !_isGreeterActive)
         {
             if (!CreateLoginSession()) // TODO: Do not switch to login screen here. It's supposed to run in the background with multiple sessions.
@@ -975,7 +983,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         else
             StopLoginSession();
 
-        // --- 9) Send reply ---
+        // --- 10) Send reply ---
         SendDBusReply_CreateSession(conn, msg, sessionId, uid, seat);
         logger->Info("Created session " + sessionId + " for user " + username);
         return true;
@@ -1026,7 +1034,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     bool SessionManagerService::AuthenticateAndOpenPAMSession(const std::string& username,
                                                           const std::string& password,
-                                                          pam_handle_t** out_pamh) const
+                                                          pam_handle_t** out_pamh)
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
 
@@ -1036,6 +1044,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         conv.appdata_ptr = &convctx;
 
         pam_handle_t* pamh = nullptr;
+        logger->Debug("PRE pam_start"); // TODO: REM
         int retval = pam_start(PAM_GREETER_SERVICE, username.c_str(), &conv, &pamh);
         if (retval != PAM_SUCCESS)
         {
@@ -1043,6 +1052,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
+        logger->Debug("PRE pam_set_item"); // TODO: REM
         retval = pam_set_item(pamh, PAM_RUSER, username.c_str());
         if (retval != PAM_SUCCESS)
         {
@@ -1051,6 +1061,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
+        logger->Debug("PRE pam_authenticate"); // TODO: REM
         retval = pam_authenticate(pamh, 0);
         if (retval != PAM_SUCCESS)
         {
@@ -1059,6 +1070,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
+        logger->Debug("PRE pam_acct_mgmt"); // TODO: REM
         retval = pam_acct_mgmt(pamh, 0);
         if (retval != PAM_SUCCESS)
         {
@@ -1067,6 +1079,27 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
+        /*logger->Debug("PRE pam_set_item"); // TODO: REM
+        retval = pam_set_item(pamh, PAM_SEAT, "seat0");
+        if (retval != PAM_SUCCESS)
+        {
+            logger->Err("pam_set_item failed for " + username + ": " + pam_strerror(pamh, retval));
+            pam_end(pamh, retval);
+            return false;
+        }*/
+
+        const int tty_num = FindFreeTTY();
+        const std::string ttyPath = tty_num > 0
+            ? "/dev/tty" + std::to_string(tty_num)
+            : "/dev/tty1"; // fallback
+
+        pam_putenv(pamh, "XDG_SESSION_TYPE=wayland"); // TODO: Error handling
+        //pam_putenv(pamh, "XDG_SEAT=seat0");
+        pam_putenv(pamh, ("XDG_VTNR=" + std::to_string(tty_num)).c_str()); // TODO: Error handling
+
+        pam_set_item(pamh, PAM_TTY, ttyPath.c_str()); // TODO: Error handling
+
+        logger->Debug("PRE pam_open_session"); // TODO: REM
         retval = pam_open_session(pamh, 0);
         if (retval != PAM_SUCCESS)
         {
@@ -1350,11 +1383,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             // arguments array: ["cage", JOS_DESKTOP_BINARY, "--locked"]
             dbus_message_iter_open_container(&innerStructIter, DBUS_TYPE_ARRAY, "s", &arrayIter3);
             auto arg0 = "/usr/bin/cage";
-            const char* arg1 = isLoginSession ? JOS_GREETER_BINARY : JOS_DESKTOP_BINARY;
-            auto arg2 = "--locked";
+            auto arg1 = "-d";
+            auto arg2 = "-s";
+            auto arg3 = "-m last";
+            const char* arg4 = isLoginSession ? JOS_GREETER_BINARY : JOS_DESKTOP_BINARY;
             if (!dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg0) ||
                 !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg1) ||
-                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg2))
+                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg2) ||
+                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg3) ||
+                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg4))
             {
                 logger->Err("Failed to append ExecStart args");
                 dbus_message_iter_close_container(&innerStructIter, &arrayIter3);
@@ -1483,7 +1520,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return false;
     }
 
-    // TODO: Make work with new SpawnUserSessionProcesses method!!!
     bool SessionManagerService::TerminateUserSessionProcesses(const std::string& sessionId)
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
@@ -1642,7 +1678,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return false;
     }
 
-    std::string SessionManagerService::QueryLogindSessionForUid(const uid_t uid) const
+    std::string SessionManagerService::QueryLogindSessionForUid(const uid_t uid, std::string& outObjectPath) const
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
 
@@ -1721,6 +1757,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             const char* sessionId = nullptr;
             uint32_t sessionUid = 0;
             const char* userName = nullptr;
+            const char* seatId = nullptr;
             const char* objPath = nullptr;
 
             if (dbus_message_iter_get_arg_type(&structIter) == DBUS_TYPE_STRING)
@@ -1735,12 +1772,30 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 dbus_message_iter_get_basic(&structIter, &userName);
             dbus_message_iter_next(&structIter);
 
+            if (dbus_message_iter_get_arg_type(&structIter) == DBUS_TYPE_STRING)
+                dbus_message_iter_get_basic(&structIter, &seatId);
+            dbus_message_iter_next(&structIter);
+
             if (dbus_message_iter_get_arg_type(&structIter) == DBUS_TYPE_OBJECT_PATH)
                 dbus_message_iter_get_basic(&structIter, &objPath);
 
-            if (sessionUid == uid && sessionId) {
-                foundSessionId = sessionId;
-                break;
+            if (!objPath)
+                logger->Err("Object path expected");
+
+            if (sessionId) logger->Debug("-> Session ID: " + std::string(sessionId)); // TODO: REM
+
+            if (sessionUid == uid && sessionId && seatId && *seatId != '\0') // TODO: MIGHT RETURN WRONG SESSION (THE MANAGER ONLY ONE)
+            {
+                if (objPath && objPath[0] == '/')
+                {
+                    foundSessionId = sessionId;
+                    outObjectPath = objPath;
+                    break;
+                }
+                else
+                {
+                    logger->Err("Invalid object path for session " + std::string(sessionId ? sessionId : "(null)"));
+                }
             }
 
             dbus_message_iter_next(&arrayIter);
@@ -1756,9 +1811,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return foundSessionId;
     }
 
-    std::string SessionManagerService::QueryLogindSeatForSession(const std::string& sessionId) const
+    // TODO: Fix issues with retrieving the seat
+    std::string SessionManagerService::QueryLogindSeatForSession(const std::string& sessionId, const std::string& sessionObjectPath) const
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
+
+        if (sessionObjectPath.empty() || sessionObjectPath[0] != '/')
+        {
+            logger->Err("Invalid session object path for session " + sessionId + ": '" + sessionObjectPath + "'");
+            return "seat0";
+        }
 
         DBusError err;
         dbus_error_init(&err);
@@ -1766,71 +1828,70 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusConnection* systemBus = dbus_bus_get(DBUS_BUS_SYSTEM, &err);
         if (!systemBus)
         {
-            if (dbus_error_is_set(&err))
-            {
-                logger->Err("Failed to connect to system bus in QueryLogindSeatForSession: " +
-                            std::string(err.message ? err.message : "unknown"));
-                dbus_error_free(&err);
-            }
-            else
-                logger->Err("Failed to connect to system bus (unknown error)");
-            return "seat0"; // safe fallback
+            logger->Err("Failed to connect to system bus: " + std::string(err.message ? err.message : "unknown"));
+            dbus_error_free(&err);
+            return "seat0";
         }
 
-        // Build object path for session
-        std::string objectPath = "/org/freedesktop/login1/session/_" + sessionId;
+        // Build the correct object path for the session
+        /*std::string objectPath = "/org/freedesktop/login1/session/";
+        if (!sessionId.empty() && isdigit(sessionId[0]))
+            objectPath += "_" + sessionId;
+        else
+            objectPath += sessionId;*/
 
         DBusMessage* msg = dbus_message_new_method_call(
             "org.freedesktop.login1",          // destination
-            objectPath.c_str(),                // object path
+            sessionObjectPath.c_str(),         // object path
             "org.freedesktop.DBus.Properties", // interface
             "Get"                              // method
         );
+
         if (!msg)
         {
-            logger->Err("Failed to allocate D-Bus message in QueryLogindSeatForSession");
-            return "seat0"; // fallback
+            logger->Err("Failed to allocate D-Bus message");
+            dbus_connection_unref(systemBus);
+            return "seat0";
         }
 
-        auto iface = "org.freedesktop.login1.Session";
-        auto prop  = "Seat";
+        const char* iface = "org.freedesktop.login1.Session";
+        const char* prop  = "Seat";
         if (!dbus_message_append_args(msg,
                                       DBUS_TYPE_STRING, &iface,
                                       DBUS_TYPE_STRING, &prop,
                                       DBUS_TYPE_INVALID))
         {
-            logger->Err("Failed to append arguments in QueryLogindSeatForSession");
+            logger->Err("Failed to append D-Bus args");
             dbus_message_unref(msg);
+            dbus_connection_unref(systemBus);
             return "seat0";
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(systemBus, msg, -1, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(systemBus, msg, 5000, &err);
         dbus_message_unref(msg);
 
         if (!reply)
         {
-            if (dbus_error_is_set(&err))
-            {
-                logger->Err("QueryLogindSeatForSession failed: " + std::string(err.message ? err.message : "unknown"));
-                dbus_error_free(&err);
-            }
-            else logger->Err("QueryLogindSeatForSession: no reply received");
+            logger->Err("D-Bus call failed: " + std::string(err.message ? err.message : "unknown"));
+            dbus_error_free(&err);
+            dbus_connection_unref(systemBus);
             return "seat0";
         }
 
-        // Reply should be a variant containing an object path
         DBusMessageIter iter;
         if (!dbus_message_iter_init(reply, &iter))
         {
-            logger->Warn("QueryLogindSeatForSession: empty reply");
+            logger->Warn("Empty D-Bus reply");
             dbus_message_unref(reply);
+            dbus_connection_unref(systemBus);
             return "seat0";
         }
 
         if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_VARIANT)
         {
-            logger->Err("QueryLogindSeatForSession: expected variant in reply");
+            logger->Err("Unexpected D-Bus reply type (expected variant)");
             dbus_message_unref(reply);
+            dbus_connection_unref(systemBus);
             return "seat0";
         }
 
@@ -1838,37 +1899,61 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         dbus_message_iter_recurse(&iter, &variantIter);
 
         const char* seatPath = nullptr;
-        if (dbus_message_iter_get_arg_type(&variantIter) == DBUS_TYPE_OBJECT_PATH)
+
+        int argType = dbus_message_iter_get_arg_type(&variantIter);
+        if (argType == DBUS_TYPE_OBJECT_PATH)
         {
+            // Old systemd (< 251)
             dbus_message_iter_get_basic(&variantIter, &seatPath);
         }
-        else
+        else if (argType == DBUS_TYPE_STRUCT)
         {
-            logger->Err("QueryLogindSeatForSession: variant did not contain object path");
-        }
+            // Newer systemd (>= 251) returns (string, object_path)
+            DBusMessageIter structIter;
+            dbus_message_iter_recurse(&variantIter, &structIter);
 
-        dbus_message_unref(reply);
+            // First element: seat ID (string)
+            if (dbus_message_iter_get_arg_type(&structIter) == DBUS_TYPE_STRING)
+            {
+                const char* seatId = nullptr;
+                dbus_message_iter_get_basic(&structIter, &seatId);
+                dbus_message_iter_next(&structIter);
+
+                // Second element: seat path (object_path)
+                if (dbus_message_iter_get_arg_type(&structIter) == DBUS_TYPE_OBJECT_PATH)
+                {
+                    dbus_message_iter_get_basic(&structIter, &seatPath);
+                }
+            }
+        }
 
         if (!seatPath)
         {
-            logger->Warn("QueryLogindSeatForSession: no seat found, falling back to seat0");
+            logger->Err("QueryLogindSeatForSession: could not extract seat object path");
+        }
+
+        dbus_message_unref(reply);
+        dbus_connection_unref(systemBus);
+
+        if (!seatPath)
+        {
+            logger->Warn("No seat found, defaulting to seat0");
             return "seat0";
         }
 
-        // seatPath looks like "/org/freedesktop/login1/seat/seat0"
-        const std::string seatStr(seatPath);
-        if (const auto pos = seatStr.find_last_of('/'); pos != std::string::npos)
+        std::string seatStr(seatPath);
+        if (const auto pos = seatStr.find_last_of('/'); pos != std::string::npos) // TODO: Maybe log this and check value for debugging
         {
             std::string seat = seatStr.substr(pos + 1);
             logger->Info("Session " + sessionId + " is on seat " + seat);
             return seat;
         }
 
-        logger->Warn("QueryLogindSeatForSession: malformed seat path (" + seatStr + "), falling back");
+        logger->Warn("Malformed seat path (" + seatStr + "), defaulting");
         return "seat0";
     }
 
-    bool SessionManagerService::ActivateLogindSession(const std::string& sessionId) const
+    bool SessionManagerService::ActivateLogindSession(const std::string& sessionId, const std::string& seat) const
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
 
@@ -1901,7 +1986,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             "org.freedesktop.login1",
             "/org/freedesktop/login1",
             "org.freedesktop.login1.Manager",
-            "ActivateSession"
+            "ActivateSessionOnSeat"
         );
         if (!msg)
         {
@@ -1912,6 +1997,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const char* sid = sessionId.c_str();
         if (!dbus_message_append_args(msg,
                                       DBUS_TYPE_STRING, &sid,
+                                      DBUS_TYPE_STRING, &seat,
                                       DBUS_TYPE_INVALID))
         {
             logger->Err("Failed to append arguments in ActivateLogindSession");
@@ -1952,6 +2038,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         _serviceManager->Get<Logger::LoggerService>()->Warn("Generated fallback session ID: " + sessionId);
 
         return sessionId;
+    }
+
+    int SessionManagerService::FindFreeTTY()
+    {
+        const int fd = open("/dev/tty0", O_RDWR);
+        if (fd < 0)
+            return -1;
+
+        int next = 0;
+        if (ioctl(fd, VT_OPENQRY, &next) == 0 && next > 0)
+            return next; // tty number (e.g. 2 means /dev/tty2)
+        close(fd);
+        return -1;
     }
 
 }
