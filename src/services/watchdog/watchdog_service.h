@@ -13,10 +13,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Watchdog
     class WatchdogService : public Service
     {
     public:
-        explicit WatchdogService(ServiceManager* serviceManager);
+        explicit WatchdogService(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err);
         ~WatchdogService() override;
 
-        bool HandleMethodCall(DBusConnection* conn, DBusMessage* msg) override { return false; }
+        bool HandleMethodCall(DBusMessage* msg) override { return false; }
         std::string GetName() override { return "WatchdogService"; }
 
     private:

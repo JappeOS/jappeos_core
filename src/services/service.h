@@ -20,7 +20,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
     public:
         static std::string GetFullInterfaceName(Service* service) { return std::string(DBUS_INTERFACE) + "." + service->GetName(); }
 
-        static void SendErrorReply(DBusConnection* conn, DBusMessage* msg, const std::string& errorName, const std::string& errorMsg) {
+        static void SendErrorReply(DBusConnection* conn, DBusMessage* msg, const std::string& errorName, const std::string& errorMsg)
+        {
             DBusMessage* error = dbus_message_new_error(
                 msg,
                 errorName.c_str(),
@@ -31,7 +32,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             dbus_message_unref(error);
         }
 
-        static void SendSuccessReply(DBusConnection* conn, DBusMessage* msg) {
+        static void SendSuccessReply(DBusConnection* conn, DBusMessage* msg)
+        {
             DBusMessage* reply = dbus_message_new_method_return(msg);
             dbus_connection_send(conn, reply, nullptr);
             dbus_connection_flush(conn);
@@ -39,19 +41,23 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
         }
 
     public:
-        explicit Service(ServiceManager* serviceManager) : _serviceManager(serviceManager) {}
+        explicit Service(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err) : _serviceManager(serviceManager), _conn(conn), _err(err) {}
         virtual ~Service() = default;
 
         virtual void InitDBus(DBusConnection* connection, DBusError* error)
         {
-            dbus_bus_add_match(connection, std::format("type='method_call',interface='{}'", GetFullInterfaceName(this)).c_str(), error);
+            _conn = connection;
+            _err = error;
+            dbus_bus_add_match(_conn, std::format("type='method_call',interface='{}'", GetFullInterfaceName(this)).c_str(), _err);
         }
 
-        virtual bool HandleMethodCall(DBusConnection* connection, DBusMessage* message) = 0;
+        virtual bool HandleMethodCall(DBusMessage* message) = 0;
         virtual std::string GetName() = 0;
 
     protected:
         ServiceManager* _serviceManager;
+        DBusConnection* _conn;
+        DBusError* _err;
     };
 
     class ServiceManager
@@ -77,7 +83,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             if (_services.contains(key))
                 return nullptr;
 
-            T* instance = new T(this);
+            T* instance = new T(this, _dbusInitialized ? _conn : nullptr, _dbusInitialized ? _err : nullptr);
             _services.emplace(key, instance);
             _servicesNamed.emplace(Service::GetFullInterfaceName(instance), instance);
 

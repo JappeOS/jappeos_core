@@ -10,7 +10,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
     class LoggerService : public Service
     {
     public:
-        explicit LoggerService(ServiceManager* serviceManager) : Service(serviceManager) {}
+        explicit LoggerService(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err) : Service(serviceManager, conn, err) {}
 
         virtual void Emerg(const std::string& str) = 0;
         virtual void Alert(const std::string& str) = 0;
@@ -27,7 +27,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
         }*/
 
         // TODO: More error/safety checking
-        bool HandleMethodCall(DBusConnection* conn, DBusMessage* msg) override
+        bool HandleMethodCall(DBusMessage* msg) override
         {
             const char* member = dbus_message_get_member(msg);
             if (strcmp(member, "Log") != 0)
@@ -38,14 +38,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
             DBusMessageIter args;
             if (!dbus_message_iter_init(msg, &args))
             {
-                SendErrorReply(conn, msg, "Invalid arguments");
+                SendErrorReply(_conn, msg, "Invalid arguments");
                 return true;
             }
 
             // Extract log level
             if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReply(conn, msg, "Expected log level as first argument");
+                SendErrorReply(_conn, msg, "Expected log level as first argument");
                 return true;
             }
             const char* level;
@@ -55,7 +55,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
             // Extract log message
             if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReply(conn, msg, "Expected message string as second argument");
+                SendErrorReply(_conn, msg, "Expected message string as second argument");
                 return true;
             }
             const char* message;
@@ -76,12 +76,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
             else if (lvlStr == "debug") Debug(msgStr);
             else
             {
-                SendErrorReply(conn, msg, "Unknown log level: " + lvlStr);
+                SendErrorReply(_conn, msg, "Unknown log level: " + lvlStr);
                 return true;
             }
 
             // Send success reply
-            SendSuccessReply(conn, msg);
+            SendSuccessReply(_conn, msg);
             return true;
         }
 

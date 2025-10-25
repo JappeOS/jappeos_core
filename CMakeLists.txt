@@ -38,7 +38,11 @@ add_executable(jappeos_core src/main.cpp
         src/event.h
         src/services/bsod/bsod_service.cpp
         src/services/bsod/bsod_service.h
-        src/utils/jos_exception.h)
+        src/utils/jos_exception.h
+        src/services/installer/installer_service.cpp
+        src/services/installer/installer_service.h
+        src/services/power_manager/power_manager_service.cpp
+        src/services/power_manager/power_manager_service.h)
 
 # Link dbus and PAM
 target_link_libraries(jappeos_core ${DBUS_LIBRARIES})

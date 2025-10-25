@@ -256,7 +256,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         {
             try
             {
-                if (!it->second->HandleMethodCall(_conn, msg))
+                if (!it->second->HandleMethodCall(msg))
                 {
                     NULL_SAFE_CALL(logger, Notice(std::string("Method not handled in service `" + it->second->GetName() + "` with interface: ") + interface));
                 }

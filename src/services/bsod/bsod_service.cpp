@@ -5,7 +5,7 @@
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Bsod
 {
 
-    BsodService::BsodService(ServiceManager* serviceManager) : Service(serviceManager) {}
+    BsodService::BsodService(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err) : Service(serviceManager, conn, err) {}
 
     bool BsodService::ShowBSODDangerousSync(const std::string& message)
     {
