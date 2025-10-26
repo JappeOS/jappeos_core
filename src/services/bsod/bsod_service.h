@@ -16,7 +16,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Bsod
     class BsodService : public Service
     {
     public:
-        explicit BsodService(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err);
+        explicit BsodService(ServiceManager* serviceManager, DBusConnection* conn);
         //~BsodService() override;
 
         bool HandleMethodCall(DBusMessage* msg) override { return false; }

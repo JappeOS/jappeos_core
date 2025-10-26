@@ -10,7 +10,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
     class LoggerService : public Service
     {
     public:
-        explicit LoggerService(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err) : Service(serviceManager, conn, err) {}
+        explicit LoggerService(ServiceManager* serviceManager, DBusConnection* conn) : Service(serviceManager, conn) {}
 
         virtual void Emerg(const std::string& str) = 0;
         virtual void Alert(const std::string& str) = 0;

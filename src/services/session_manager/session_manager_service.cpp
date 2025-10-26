@@ -37,8 +37,26 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return PAM_SUCCESS;
     }
 
-    SessionManagerService::SessionManagerService(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err) : Service(serviceManager, conn, err)
+    SessionManagerService::SessionManagerService(ServiceManager* serviceManager, DBusConnection* conn) : Service(serviceManager, conn)
     {
+        DBusError err;
+        dbus_error_init(&err);
+
+        dbus_bus_add_match(_conn,
+                      "type='signal',"
+                           "sender='org.freedesktop.systemd1',"
+                           "interface='org.freedesktop.systemd1.Manager',"
+                           "member='JobRemoved'",
+                           &err);
+
+        dbus_connection_flush(_conn);
+
+        if (dbus_error_is_set(&err))
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Err(std::string("Failed to add D-Bus match: ") + err.message);
+            dbus_error_free(&err);
+        }
+
         CreateLoginSession();
     }
 
@@ -64,7 +82,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         StopLoginSession();
     }
 
-    bool SessionManagerService::CreateLoginSession() // TODO: NEW
+    bool SessionManagerService::CreateLoginSession()
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
 
@@ -159,8 +177,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         // --- 7) Set current _greeterSession value ---
+        _sessions[sessionId] = { JOS_GREETER_USER, scopeName, static_cast<uid_t>(pwd->pw_uid), pamh };
         _greeterSessionID = sessionId;
-        _greeterSession = { JOS_GREETER_USER, scopeName, static_cast<uid_t>(pwd->pw_uid), pamh };
+        _pendingUnits.push_back(scopeName);
         pamh = nullptr;
         pamOpened = false;
 
@@ -171,15 +190,24 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return true;
     }
 
-    bool SessionManagerService::StopLoginSession() // TODO: NEW
+    bool SessionManagerService::StopLoginSession()
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
 
         if (!_isGreeterActive)
         {
-            logger->Warn("TerminateLoginGreeterProcesses called but greeter is not active");
+            logger->Warn("StopLoginSession called but greeter is not active");
             return false;
         }
+
+        const auto it = _sessions.find(_greeterSessionID);
+        if (it == _sessions.end())
+        {
+            logger->Crit("StopLoginSession called but session was not found");
+            return false;
+        }
+
+        auto& session = it->second;
 
         // --- 1) Terminate processes ---
         if (!TerminateUserSessionProcesses(_greeterSessionID))
@@ -189,20 +217,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         // --- 2) Close PAM session ---
-        if (_greeterSession.pam_handle)
+        if (session.pam_handle)
         {
-            if (const int rc1 = pam_close_session(_greeterSession.pam_handle, 0); rc1 != PAM_SUCCESS)
+            if (const int rc1 = pam_close_session(session.pam_handle, 0); rc1 != PAM_SUCCESS)
                 logger->Warn("pam_close_session failed for session " + _greeterSessionID + ": " + std::to_string(rc1));
 
-            if (const int rc2 = pam_end(_greeterSession.pam_handle, PAM_SUCCESS); rc2 != PAM_SUCCESS)
+            if (const int rc2 = pam_end(session.pam_handle, PAM_SUCCESS); rc2 != PAM_SUCCESS)
                 logger->Warn("pam_end failed for session " + _greeterSessionID + ": " + std::to_string(rc2));
 
-            _greeterSession.pam_handle = nullptr;
+            session.pam_handle = nullptr;
         }
 
         // --- 3) Cleanup and return ---
+        _sessions.erase(it);
         _greeterSessionID = {};
-        _greeterSession = {};
         _isGreeterActive = false;
         logger->Info("Greeter session terminated successfully");
         return true;
@@ -213,14 +241,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return std::ranges::any_of(_sessions, [&](auto const& e){ return e.second.uid == uid; });
     }
 
-    bool SessionManagerService::IsPrivilegedClientProcess(pid_t pid)
+    bool SessionManagerService::IsPrivilegedClientProcess(const pid_t pid) const
     {
-
+        return std::ranges::any_of(_sessions, [&](auto const& e)
+        {
+            return std::ranges::find(e.second.privilegedClientProcesses, pid) != e.second.privilegedClientProcesses.end();
+        });
     }
 
     bool SessionManagerService::HandleMethodCall(DBusMessage* msg)
     {
-        if (!_conn || !msg)
+        if (!msg)
         {
             _serviceManager->Get<Logger::LoggerService>()->Err("HandleMethodCall called with null parameters");
             return false;
@@ -234,15 +265,26 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return true;
         }
 
-        DBusError error;
-        dbus_error_init(&error);
-        uid_t senderUid = dbus_bus_get_unix_user(_conn, sender, &error);
-        if (dbus_error_is_set(&error))
+        DBusError err;
+        dbus_error_init(&err);
+
+        const uid_t senderUid = dbus_bus_get_unix_user(_conn, sender, &err);
+        if (dbus_error_is_set(&err))
         {
             _serviceManager->Get<Logger::LoggerService>()->Err(
-            std::string("Failed to get UID for sender ") + sender + ": " + (error.message ? error.message : "unknown"));
-            dbus_error_free(&error);
+            std::string("Failed to get UID for sender ") + sender + ": " + (err.message ? err.message : "unknown"));
+            dbus_error_free(&err);
             SendErrorReply(_conn, msg, DBUS_ERROR_ACCESS_DENIED, "Could not get UID");
+            return true;
+        }
+
+        dbus_error_free(&err);
+
+        const char* iface = dbus_message_get_interface(msg);
+        if (!iface)
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Warn("DBus message without interface field");
+            SendErrorReply(_conn, msg, DBUS_ERROR_UNKNOWN_INTERFACE, "No interface specified");
             return true;
         }
 
@@ -326,6 +368,35 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             }
 
             return ListSessions(msg, senderUid);
+        }
+        else if (strcmp(iface, "org.freedesktop.systemd1.Manager") == 0 &&
+                 strcmp(member, "JobRemoved") == 0)
+        {
+            uint32_t id = 0;
+            const char* jobPath = nullptr;
+            const char* unitName = nullptr;
+            const char* result = nullptr;
+
+            DBusError err2;
+            dbus_error_init(&err2);
+
+            if (!dbus_message_get_args(
+                    msg, &err2,
+                    DBUS_TYPE_UINT32, &id,
+                    DBUS_TYPE_OBJECT_PATH, &jobPath,
+                    DBUS_TYPE_STRING, &unitName,
+                    DBUS_TYPE_STRING, &result,
+                    DBUS_TYPE_INVALID))
+            {
+                SendErrorReply(_conn, msg, DBUS_ERROR_INVALID_ARGS, std::string("Failed to parse JobRemoved signal: ") +
+                              (err2.message ? err2.message : "unknown"));
+                dbus_error_free(&err2);
+                return true;
+            }
+
+            dbus_error_free(&err2);
+
+            OnJobRemoved(unitName, result);
         }
 
         _serviceManager->Get<Logger::LoggerService>()->Warn(std::string("Unknown DBus method called: ") + member);
@@ -444,6 +515,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         // --- 8) Insert into session map ---
         _sessions[sessionId] = { username, scopeName, uid, pamh, seat };
+        _pendingUnits.push_back(scopeName);
         // ownership of pamh now belongs to _sessions entry
         pamh = nullptr;
         pamOpened = false;
@@ -589,8 +661,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                                      const std::string& username,
                                                      const std::string& sessionId,
                                                      const std::string& seat,
-                                                     std::string& outServiceName,
-                                                     std::vector<pid_t>& outProcessIds) const
+                                                     std::string& outServiceName) const
     {
         auto logger = _serviceManager->Get<Logger::LoggerService>();
 
@@ -601,13 +672,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
-        // Connect to the system bus
-        if (!_conn)
-        {
-            logger->Err(std::string("Failed to connect to system bus: ") + (_err->message ? _err->message : "unknown"));
-            if (dbus_error_is_set(_err)) dbus_error_free(_err);
-            return false;
-        }
+        DBusError err;
+        dbus_error_init(&err);
 
         // Cleanup helpers
         DBusMessage* msg = nullptr;
@@ -625,8 +691,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 msg = nullptr;
             }
 
-            if (dbus_error_is_set(_err))
-                dbus_error_free(_err);
+            if (dbus_error_is_set(&err))
+                dbus_error_free(&err);
         };
 
         // Build scope name early
@@ -889,14 +955,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         // Send message and wait for reply
-        reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, _err);
+        reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, &err);
         dbus_message_unref(msg);
         msg = nullptr;
 
-        if (dbus_error_is_set(_err))
+        if (dbus_error_is_set(&err))
         {
-            logger->Err(std::string("StartTransientUnit failed: ") + (_err->message ? _err->message : "unknown"));
-            dbus_error_free(_err);
+            logger->Err(std::string("StartTransientUnit failed: ") + (err.message ? err.message : "unknown"));
+            dbus_error_free(&err);
             cleanupDbus();
             return false;
         }
@@ -995,12 +1061,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         const std::string& scope = it->second.scopeName;
 
-        if (!_conn)
-        {
-            logger->Err("Failed to connect to system bus: " + std::string(_err->message ? _err->message : "unknown"));
-            if (dbus_error_is_set(_err)) dbus_error_free(_err);
-            return false;
-        }
+        DBusError err;
+        dbus_error_init(&err);
 
         DBusMessage* msg = dbus_message_new_method_call(
             "org.freedesktop.systemd1",
@@ -1028,15 +1090,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, _err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, &err);
         dbus_message_unref(msg);
 
         if (!reply)
         {
-            if (dbus_error_is_set(_err))
+            if (dbus_error_is_set(&err))
             {
-                logger->Err("StopUnit failed for scope " + scope + ": " + std::string(_err->message ? _err->message : "unknown"));
-                dbus_error_free(_err);
+                logger->Err("StopUnit failed for scope " + scope + ": " + std::string(err.message ? err.message : "unknown"));
+                dbus_error_free(&err);
             }
             else logger->Err("StopUnit returned no reply for scope " + scope);
             return false;
@@ -1127,29 +1189,66 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return true;
     }
 
+    void SessionManagerService::OnJobRemoved(const std::string& unitName, const std::string& result)
+    {
+        const auto logger = _serviceManager->Get<Logger::LoggerService>();
+
+        // Only handle our own transient units
+        const auto it = std::ranges::find(_pendingUnits, unitName);
+        if (it == _pendingUnits.end())
+        {
+            logger->Debug("Ignoring JobRemoved for unrelated unit: " + unitName);
+            return;
+        }
+
+        logger->Info("JobRemoved for unit " + unitName + " (result=" + result + ")");
+
+        // Now query the MainPID for this unit
+        if (const pid_t pid = GetUnitMainPID(_conn, unitName); pid > 0)
+        {
+            logger->Info("Got MainPID for " + unitName + ": " + std::to_string(pid));
+
+            std::string sessionId;
+            if (GetSessionIdByUnitName(unitName, sessionId))
+            {
+                const auto it = _sessions.find(sessionId);
+                if (it != _sessions.end())
+                {
+                    auto& session = it->second;
+                    session.privilegedClientProcesses.push_back(pid);
+                }
+                else
+                {
+                    logger->Err("Failed to get session info by unit name: " + unitName);
+                }
+            }
+            else
+            {
+                logger->Err("Failed to get session info by unit name: " + unitName);
+            }
+        }
+        else
+        {
+            logger->Warn("Failed to get MainPID for " + unitName);
+        }
+
+        // Mark unit as completed, etc.
+        _pendingUnits.erase(it);
+    }
+
     bool SessionManagerService::IsGreeter(const uid_t callerUid) const
     {
-        if (callerUid == _greeterSession.uid) return true;
+        const auto it = _sessions.find(_greeterSessionID);
+        if (it == _sessions.end())
+            return false;
+
+        if (callerUid == it->second.uid) return true;
         return false;
     }
 
     std::string SessionManagerService::QueryLogindSessionForUid(const uid_t uid, std::string& outObjectPath) const
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
-        if (!_conn)
-        {
-            if (dbus_error_is_set(_err))
-            {
-                logger->Err("Failed to connect to system bus: " + std::string(_err->message ? _err->message : "unknown"));
-                dbus_error_free(_err);
-            }
-            else
-            {
-                logger->Err("Failed to connect to system bus (unknown error)");
-            }
-            return "";
-        }
 
         DBusMessage* msg = dbus_message_new_method_call(
             "org.freedesktop.login1",            // destination
@@ -1163,15 +1262,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return "";
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, _err);
+        DBusError err;
+        dbus_error_init(&err);
+
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, &err);
         dbus_message_unref(msg);
 
         if (!reply)
         {
-            if (dbus_error_is_set(_err))
+            if (dbus_error_is_set(&err))
             {
-                logger->Err("ListSessions call failed: " + std::string(_err->message ? _err->message : "unknown"));
-                dbus_error_free(_err);
+                logger->Err("ListSessions call failed: " + std::string(err.message ? err.message : "unknown"));
+                dbus_error_free(&err);
             }
             else
             {
@@ -1273,13 +1375,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return "seat0";
         }
 
-        if (!_conn)
-        {
-            logger->Err("Failed to connect to system bus: " + std::string(_err->message ? _err->message : "unknown"));
-            dbus_error_free(_err);
-            return "seat0";
-        }
-
         // Build the correct object path for the session
         /*std::string objectPath = "/org/freedesktop/login1/session/";
         if (!sessionId.empty() && isdigit(sessionId[0]))
@@ -1300,8 +1395,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return "seat0";
         }
 
-        const char* iface = "org.freedesktop.login1.Session";
-        const char* prop  = "Seat";
+        auto iface = "org.freedesktop.login1.Session";
+        auto prop  = "Seat";
         if (!dbus_message_append_args(msg,
                                       DBUS_TYPE_STRING, &iface,
                                       DBUS_TYPE_STRING, &prop,
@@ -1312,13 +1407,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return "seat0";
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, 5000, _err);
+        DBusError err;
+        dbus_error_init(&err);
+
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, 5000, &err);
         dbus_message_unref(msg);
 
         if (!reply)
         {
-            logger->Err("D-Bus call failed: " + std::string(_err->message ? _err->message : "unknown"));
-            dbus_error_free(_err);
+            logger->Err("D-Bus call failed: " + std::string(err.message ? err.message : "unknown"));
+            dbus_error_free(&err);
             return "seat0";
         }
 
@@ -1404,21 +1502,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
-        if (!_conn)
-        {
-            if (dbus_error_is_set(_err))
-            {
-                logger->Err("Failed to connect to system bus in ActivateLogindSession: " +
-                            std::string(_err->message ? _err->message : "unknown"));
-                dbus_error_free(_err);
-            }
-            else
-            {
-                logger->Err("Failed to connect to system bus (unknown error)");
-            }
-            return false;
-        }
-
         DBusMessage* msg = dbus_message_new_method_call(
             "org.freedesktop.login1",
             "/org/freedesktop/login1",
@@ -1442,15 +1525,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, _err);
+        DBusError err;
+        dbus_error_init(&err);
+
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, &err);
         dbus_message_unref(msg);
 
         if (!reply)
         {
-            if (dbus_error_is_set(_err))
+            if (dbus_error_is_set(&err))
             {
-                logger->Err("ActivateLogindSession failed: " + std::string(_err->message ? _err->message : "unknown"));
-                dbus_error_free(_err);
+                logger->Err("ActivateLogindSession failed: " + std::string(err.message ? err.message : "unknown"));
+                dbus_error_free(&err);
             }
             else logger->Err("ActivateLogindSession: no reply received");
             return false;
@@ -1459,6 +1545,107 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         dbus_message_unref(reply);
         logger->Info("Activated logind session: " + sessionId);
         return true;
+    }
+
+    pid_t SessionManagerService::GetUnitMainPID(DBusConnection* conn, const std::string& unitName)
+    {
+        DBusError err;
+        dbus_error_init(&err);
+        DBusMessage* msg = nullptr;
+        DBusMessage* reply = nullptr;
+        pid_t pid = 0;
+
+        // Step 1: Get the unit object path
+        msg = dbus_message_new_method_call(
+            "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "GetUnit"
+        );
+        if (!msg)
+        {
+            dbus_error_free(&err);
+            return 0;
+        }
+
+        const char* name = unitName.c_str();
+        if (!dbus_message_append_args(msg, DBUS_TYPE_STRING, &name, DBUS_TYPE_INVALID))
+        {
+            dbus_message_unref(msg);
+            dbus_error_free(&err);
+            return 0;
+        }
+
+        reply = dbus_connection_send_with_reply_and_block(conn, msg, -1, &err);
+        dbus_message_unref(msg);
+
+        if (!reply)
+        {
+            if (dbus_error_is_set(&err))
+                dbus_error_free(&err);
+            return 0;
+        }
+
+        const char* unitPath = nullptr;
+        if (!dbus_message_get_args(reply, &err, DBUS_TYPE_OBJECT_PATH, &unitPath, DBUS_TYPE_INVALID))
+        {
+            dbus_message_unref(reply);
+            dbus_error_free(&err);
+            return 0;
+        }
+        dbus_message_unref(reply);
+
+        // Step 2: Get MainPID property
+        msg = dbus_message_new_method_call(
+            "org.freedesktop.systemd1",
+            unitPath,
+            "org.freedesktop.DBus.Properties",
+            "Get"
+        );
+        if (!msg)
+        {
+            dbus_error_free(&err);
+            return 0;
+        }
+
+        auto iface = "org.freedesktop.systemd1.Service";
+        auto prop = "MainPID";
+        if (!dbus_message_append_args(
+                msg,
+                DBUS_TYPE_STRING, &iface,
+                DBUS_TYPE_STRING, &prop,
+                DBUS_TYPE_INVALID))
+        {
+            dbus_message_unref(msg);
+            dbus_error_free(&err);
+            return 0;
+        }
+
+        reply = dbus_connection_send_with_reply_and_block(conn, msg, -1, &err);
+        dbus_message_unref(msg);
+
+        if (!reply)
+        {
+            if (dbus_error_is_set(&err))
+                dbus_error_free(&err);
+            return 0;
+        }
+
+        // Extract variant(uint32)
+        DBusMessageIter iter, variant;
+        dbus_message_iter_init(reply, &iter);
+        if (DBUS_TYPE_VARIANT == dbus_message_iter_get_arg_type(&iter))
+        {
+            dbus_message_iter_recurse(&iter, &variant);
+            dbus_uint32_t mainPid = 0;
+            if (DBUS_TYPE_UINT32 == dbus_message_iter_get_arg_type(&variant))
+                dbus_message_iter_get_basic(&variant, &mainPid);
+            pid = static_cast<pid_t>(mainPid);
+        }
+
+        dbus_message_unref(reply);
+        dbus_error_free(&err);
+        return pid;
     }
 
     std::string SessionManagerService::GenerateFallbackSessionId() const
@@ -1488,6 +1675,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return next; // tty number (e.g. 2 means /dev/tty2)
         close(fd);
         return -1;
+    }
+
+    bool SessionManagerService::GetSessionIdByUnitName(const std::string& unitName, std::string& outSessionId)
+    {
+        return std::ranges::any_of(_sessions, [&](auto const& e)
+        {
+            if (e.second.scopeName == unitName)
+            {
+                outSessionId = e.first;
+                return true;
+            }
+
+            return false;
+        });
     }
 
 }

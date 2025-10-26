@@ -146,7 +146,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         // TODO: Init other services
 
         InitDBus(logger);
-        _serviceManager->InitDBus(_conn, _err);
+        _serviceManager->InitDBus(_conn);
         InitServices();
 
         NULL_SAFE_CALL(logger, Debug("Initialization done!"));

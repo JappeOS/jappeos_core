@@ -41,14 +41,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
         }
 
     public:
-        explicit Service(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err) : _serviceManager(serviceManager), _conn(conn), _err(err) {}
+        explicit Service(ServiceManager* serviceManager, DBusConnection* conn) : _serviceManager(serviceManager), _conn(conn) {}
         virtual ~Service() = default;
 
-        virtual void InitDBus(DBusConnection* connection, DBusError* error)
+        virtual void InitDBus(DBusConnection* connection)
         {
+            DBusError err;
+            dbus_error_init(&err);
+
             _conn = connection;
-            _err = error;
-            dbus_bus_add_match(_conn, std::format("type='method_call',interface='{}'", GetFullInterfaceName(this)).c_str(), _err);
+
+            dbus_bus_add_match(_conn, std::format("type='method_call',interface='{}'", GetFullInterfaceName(this)).c_str(), &err);
+            dbus_error_free(&err); // TODO: LOG
         }
 
         virtual bool HandleMethodCall(DBusMessage* message) = 0;
@@ -57,19 +61,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
     protected:
         ServiceManager* _serviceManager;
         DBusConnection* _conn;
-        DBusError* _err;
     };
 
     class ServiceManager
     {
     public:
-        void InitDBus(DBusConnection* conn, DBusError* err)
+        void InitDBus(DBusConnection* conn)
         {
             _conn = conn;
-            _err = err;
 
             for (auto& service : _services)
-                service.second->InitDBus(_conn, _err);
+                service.second->InitDBus(_conn);
 
             _dbusInitialized = true;
         }
@@ -83,12 +85,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             if (_services.contains(key))
                 return nullptr;
 
-            T* instance = new T(this, _dbusInitialized ? _conn : nullptr, _dbusInitialized ? _err : nullptr);
+            T* instance = new T(this, _dbusInitialized ? _conn : nullptr);
             _services.emplace(key, instance);
             _servicesNamed.emplace(Service::GetFullInterfaceName(instance), instance);
 
             if (_dbusInitialized)
-                instance->InitDBus(_conn, _err);
+                instance->InitDBus(_conn);
 
             return instance;
         }
@@ -118,7 +120,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
         std::map<std::string, Service*> _servicesNamed;
 
         DBusConnection* _conn = nullptr;
-        DBusError* _err = nullptr;
         bool _dbusInitialized = false;
     };
 }

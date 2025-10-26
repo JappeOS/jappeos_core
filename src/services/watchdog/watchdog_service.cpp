@@ -5,7 +5,7 @@
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Watchdog
 {
 
-    WatchdogService::WatchdogService(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err) : Service(serviceManager, conn, err)
+    WatchdogService::WatchdogService(ServiceManager* serviceManager, DBusConnection* conn) : Service(serviceManager, conn)
     {
         _timeout = std::chrono::seconds(25); // TODO: Dynamic time?
         _watcherThread = std::thread([this]() { this->ThreadFunc(); });

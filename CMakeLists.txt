@@ -42,7 +42,8 @@ add_executable(jappeos_core src/main.cpp
         src/services/installer/installer_service.cpp
         src/services/installer/installer_service.h
         src/services/power_manager/power_manager_service.cpp
-        src/services/power_manager/power_manager_service.h)
+        src/services/power_manager/power_manager_service.h
+        src/utils/dbus_utils.h)
 
 # Link dbus and PAM
 target_link_libraries(jappeos_core ${DBUS_LIBRARIES})

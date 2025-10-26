@@ -3,7 +3,7 @@
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
 {
 
-    StdoutLogger::StdoutLogger(ServiceManager* serviceManager, DBusConnection* conn, DBusError* err) : LoggerService(serviceManager, conn, err)
+    StdoutLogger::StdoutLogger(ServiceManager* serviceManager, DBusConnection* conn) : LoggerService(serviceManager, conn)
     {
         _loggerThread = std::thread(&StdoutLogger::Process, this);
     }
