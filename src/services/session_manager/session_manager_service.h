@@ -66,9 +66,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     public:
         const char* PAM_GREETER_SERVICE = "jappeos-greeter";
-        const char* JOS_DESKTOP_BINARY = "/jappeos/desktop";
+        const char* JOS_DESKTOP_BINARY = "/jappeos/desktop/desktop";
         const char* JOS_DESKTOP_NAME = "JappeOS Desktop";
-        const char* JOS_GREETER_BINARY = "/jappeos/greeter";
+        const char* JOS_GREETER_BINARY = "/jappeos/greeter/greeter";
         const char* JOS_GREETER_USER = "jos-greeter";
         const char* JOS_INSTALLER_BINARY = "/jappeos/installer";
 
