@@ -10,6 +10,7 @@
 #include <chrono>
 #include <atomic>
 #include <fcntl.h>
+#include <fstream>
 
 #include "../service.h"
 
@@ -62,7 +63,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         [[nodiscard]] bool IsLiveEnvironment() const { return _isLiveEnvironment; }
 
                       bool IsManagedUserSession(uid_t uid);
-        [[nodiscard]] bool IsPrivilegedClientProcess(pid_t pid) const;
+        [[nodiscard]] bool IsPrivilegedClientProcess(pid_t pid, bool allowChildProcesses = false) const;
 
     public:
         const char* PAM_GREETER_SERVICE = "jappeos-greeter";
@@ -70,7 +71,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const char* JOS_DESKTOP_NAME = "JappeOS Desktop";
         const char* JOS_GREETER_BINARY = "/jappeos/greeter/greeter";
         const char* JOS_GREETER_USER = "jos-greeter";
-        const char* JOS_INSTALLER_BINARY = "/jappeos/installer";
+        const char* JOS_INSTALLER_BINARY = "/jappeos/installer/installer";
 
     private:
         bool CreateLoginSession();
@@ -99,6 +100,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         [[nodiscard]] std::string GenerateFallbackSessionId() const;
         int FindFreeTTY();
         bool GetSessionIdByUnitName(const std::string& unitName, std::string& outSessionId);
+        std::optional<pid_t> GetParentPid(pid_t pid) const;
 
     private:
         std::map<std::string, pam_handle_t*> _activePAMHandles;

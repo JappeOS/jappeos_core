@@ -4,6 +4,7 @@
 #include "services/session_manager/session_manager_service.h"
 #include "services/watchdog/watchdog_service.h"
 #include "services/bsod/bsod_service.h"
+#include "services/power_manager/power_manager_service.h"
 #include "utils/jos_exception.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore
@@ -211,6 +212,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         _serviceManager->Register<Services::Bsod::BsodService>();
         _serviceManager->Register<Services::Watchdog::WatchdogService>();
         _serviceManager->Register<Services::SessionManager::SessionManagerService>();
+        _serviceManager->Register<Services::PowerManager::PowerManagerService>();
     }
 
     void Application::Update()
@@ -251,20 +253,40 @@ namespace JappeStudios::JappeOS::JappeOSCore
             return;
 
         auto services = _serviceManager->ListNamed();
-        auto it = services.find(interface);
-        if (it != services.end())
+
+        if (dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_SIGNAL)
         {
-            try
+            const std::string key = std::string(interface) + "." + dbus_message_get_member(msg);
+            const auto& signalSubscribers = _serviceManager->ListSignalSubscribers();
+            if (const auto subscribers = signalSubscribers.find(key); subscribers != signalSubscribers.end())
             {
-                if (!it->second->HandleMethodCall(msg))
+                for (auto& svcName : subscribers->second)
                 {
-                    NULL_SAFE_CALL(logger, Notice(std::string("Method not handled in service `" + it->second->GetName() + "` with interface: ") + interface));
+                    const auto svc = services[svcName];
+                    HandleMethodCall(logger, svc, msg, interface);
                 }
             }
-            catch (const std::exception& e)
+            return;
+        }
+
+        if (const auto it = services.find(interface); it != services.end())
+        {
+            HandleMethodCall(logger, it->second, msg, interface);
+        }
+    }
+
+    void Application::HandleMethodCall(Services::Logger::LoggerService* logger, Services::Service* svc, DBusMessage* msg, const char* interface) const
+    {
+        try
+        {
+            if (!svc->HandleMethodCall(msg))
             {
-                NULL_SAFE_CALL(logger, Crit(std::string("(non-fatal) Unhandled exception in service `" + it->second->GetName() + "` while handling method call: ") + e.what()));
+                NULL_SAFE_CALL(logger, Debug(std::string("Method not handled in service `" + svc->GetName() + "` with interface: ") + interface));
             }
+        }
+        catch (const std::exception& e)
+        {
+            NULL_SAFE_CALL(logger, Crit(std::string("(non-fatal) Unhandled exception in service `" + svc->GetName() + "` while handling method call: ") + e.what()));
         }
     }
 

@@ -66,6 +66,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         void InitServices() const;
         void Update();
         void HandleDBusMessage(Services::Logger::LoggerService* logger, DBusMessage* msg) const;
+        void HandleMethodCall(Services::Logger::LoggerService* logger, Services::Service* svc, DBusMessage* msg, const char* interface) const;
         void CleanUp() const;
 
     private:

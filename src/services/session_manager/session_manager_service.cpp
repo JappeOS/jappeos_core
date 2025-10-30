@@ -49,6 +49,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                            "member='JobRemoved'",
                            &err);
 
+        /*dbus_bus_add_match(_conn,
+                           "type='signal',"
+                           "sender='org.freedesktop.systemd1',"
+                           "path='/org/freedesktop/systemd1',"
+                           "interface='org.freedesktop.systemd1.Manager',"
+                           "member='JobRemoved'",
+                           &err);*/
+
         dbus_connection_flush(_conn);
 
         if (dbus_error_is_set(&err))
@@ -56,6 +64,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             _serviceManager->Get<Logger::LoggerService>()->Err(std::string("Failed to add D-Bus match: ") + err.message);
             dbus_error_free(&err);
         }
+
+        SubscribeToSignal("org.freedesktop.systemd1.Manager.JobRemoved");
 
         CreateLoginSession();
     }
@@ -177,7 +187,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         // --- 7) Set current _greeterSession value ---
-        _sessions[sessionId] = { JOS_GREETER_USER, scopeName, static_cast<uid_t>(pwd->pw_uid), pamh };
+        _sessions[sessionId] = { JOS_GREETER_USER, scopeName, static_cast<uid_t>(pwd->pw_uid), pamh, seat, {} };
         _greeterSessionID = sessionId;
         _pendingUnits.push_back(scopeName);
         pamh = nullptr;
@@ -241,20 +251,92 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return std::ranges::any_of(_sessions, [&](auto const& e){ return e.second.uid == uid; });
     }
 
-    bool SessionManagerService::IsPrivilegedClientProcess(const pid_t pid) const
+    bool SessionManagerService::IsPrivilegedClientProcess(const pid_t pid, const bool allowChildProcesses) const
     {
+        if (allowChildProcesses)
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Warn("Use of possibly unsafe option 'allowChildProcesses' on 'IsPrivilegedClientProcess'!");
+        }
+
         return std::ranges::any_of(_sessions, [&](auto const& e)
         {
-            return std::ranges::find(e.second.privilegedClientProcesses, pid) != e.second.privilegedClientProcesses.end();
+            auto const& privilegedPids = e.second.privilegedClientProcesses;
+
+            if (std::ranges::find(privilegedPids, pid) != privilegedPids.end())
+                return true;
+
+            if (allowChildProcesses)
+            {
+                auto maybeParent = GetParentPid(pid);
+                if (maybeParent && std::ranges::find(privilegedPids, *maybeParent) != privilegedPids.end())
+                    return true;
+            }
+
+            return false;
         });
     }
 
     bool SessionManagerService::HandleMethodCall(DBusMessage* msg)
     {
+        const char* msgType =
+            dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_METHOD_CALL ? "method_call" :
+            dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_SIGNAL ? "signal" :
+            dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_METHOD_RETURN ? "method_return" :
+            dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_ERROR ? "error" : "unknown";
+
+        _serviceManager->Get<Logger::LoggerService>()->Debug(
+            std::string("Received D-Bus message: type=") + msgType +
+            " interface=" + (dbus_message_get_interface(msg) ?: "null") +
+            " member=" + (dbus_message_get_member(msg) ?: "null"));
+
         if (!msg)
         {
             _serviceManager->Get<Logger::LoggerService>()->Err("HandleMethodCall called with null parameters");
             return false;
+        }
+
+        if (dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_SIGNAL)
+        {
+            const char* iface = dbus_message_get_interface(msg);
+            const char* member = dbus_message_get_member(msg);
+
+            if (iface && member &&
+                strcmp(iface, "org.freedesktop.systemd1.Manager") == 0 &&
+                strcmp(member, "JobRemoved") == 0)
+            {
+                _serviceManager->Get<Logger::LoggerService>()->Debug("!!! OnJobRemoved PRE");
+
+                uint32_t id = 0;
+                const char* jobPath = nullptr;
+                const char* unitName = nullptr;
+                const char* result = nullptr;
+
+                DBusError err;
+                dbus_error_init(&err);
+
+                if (!dbus_message_get_args(
+                        msg, &err,
+                        DBUS_TYPE_UINT32, &id,
+                        DBUS_TYPE_OBJECT_PATH, &jobPath,
+                        DBUS_TYPE_STRING, &unitName,
+                        DBUS_TYPE_STRING, &result,
+                        DBUS_TYPE_INVALID))
+                {
+                    _serviceManager->Get<Logger::LoggerService>()->Err(
+                        std::string("Failed to parse JobRemoved signal: ") +
+                        (err.message ? err.message : "unknown"));
+                    dbus_error_free(&err);
+                    return true;
+                }
+
+                dbus_error_free(&err);
+
+                OnJobRemoved(unitName, result);
+                return true; // Signal handled
+            }
+
+            // Other signals can be handled here
+            return true; // Ignore unknown signals
         }
 
         const char* sender = dbus_message_get_sender(msg);
@@ -360,8 +442,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
         else if (strcmp(member, "ListSessions") == 0)
         {
-            // No args expected
-            if (dbus_message_iter_init(msg, nullptr))
+            DBusMessageIter iter;
+            if (dbus_message_iter_init(msg, &iter))
             {
                 SendErrorReply(_conn, msg, DBUS_ERROR_INVALID_ARGS, "ListSessions expects no arguments");
                 return true;
@@ -372,6 +454,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         else if (strcmp(iface, "org.freedesktop.systemd1.Manager") == 0 &&
                  strcmp(member, "JobRemoved") == 0)
         {
+            _serviceManager->Get<Logger::LoggerService>()->Debug("!!! OnJobRemoved PRE"); // TODO: REM
             uint32_t id = 0;
             const char* jobPath = nullptr;
             const char* unitName = nullptr;
@@ -514,7 +597,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         // --- 8) Insert into session map ---
-        _sessions[sessionId] = { username, scopeName, uid, pamh, seat };
+        _sessions[sessionId] = { username, scopeName, uid, pamh, seat, {} };
         _pendingUnits.push_back(scopeName);
         // ownership of pamh now belongs to _sessions entry
         pamh = nullptr;
@@ -1689,6 +1772,25 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
             return false;
         });
+    }
+
+    std::optional<pid_t> SessionManagerService::GetParentPid(pid_t pid) const
+    {
+        std::ifstream statFile("/proc/" + std::to_string(pid) + "/stat");
+        if (!statFile.is_open())
+            return std::nullopt;
+
+        std::string comm;
+        char state;
+        pid_t ppid;
+
+        // Format: pid (comm) state ppid ...
+        statFile >> pid >> comm >> state >> ppid;
+
+        if (statFile.fail())
+            return std::nullopt;
+
+        return ppid;
     }
 
 }

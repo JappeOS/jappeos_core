@@ -58,7 +58,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         // Dispatch based on method name
         if (strcmp(member, "Shutdown") == 0)
         {
-            if (dbus_message_iter_init(msg, nullptr))
+            DBusMessageIter iter;
+            if (dbus_message_iter_init(msg, &iter))
             {
                 SendErrorReply(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Shutdown expects no arguments");
                 return true;
@@ -69,7 +70,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         }
         else if (strcmp(member, "Reboot") == 0)
         {
-            if (dbus_message_iter_init(msg, nullptr))
+            DBusMessageIter iter;
+            if (dbus_message_iter_init(msg, &iter))
             {
                 SendErrorReply(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Reboot expects no arguments");
                 return true;
@@ -80,7 +82,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         }
         else if (strcmp(member, "Suspend") == 0)
         {
-            if (dbus_message_iter_init(msg, nullptr))
+            DBusMessageIter iter;
+            if (dbus_message_iter_init(msg, &iter))
             {
                 SendErrorReply(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Suspend expects no arguments");
                 return true;
@@ -108,7 +111,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             return;
         }
 
-        if (!sessionMgr->IsPrivilegedClientProcess(senderPid))
+        if (!sessionMgr->IsPrivilegedClientProcess(senderPid, true))
         {
             logger->Err("PowerOff message sent from unauthorized process");
             SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
@@ -133,8 +136,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             return;
         }
 
+        dbus_bool_t interactive = FALSE;
+
         if (!dbus_message_append_args(msg,
-                                      DBUS_TYPE_BOOLEAN, false,
+                                      DBUS_TYPE_BOOLEAN, &interactive,
                                       DBUS_TYPE_INVALID))
         {
             const auto errmsg = "Failed to append arguments to PowerOff message";

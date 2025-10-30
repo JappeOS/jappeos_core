@@ -5,21 +5,26 @@ using namespace JappeStudios::JappeOS::JappeOSCore::Services;
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services
 {
+    void Service::SubscribeToSignal(const std::string& signalName) { _serviceManager->SubscribeServiceToSignal(signalName, GetFullInterfaceName(this)); }
+
     ServiceManager::~ServiceManager()
     {
-        for (auto& [_, service] : _services)
+        for (auto it = _order.rbegin(); it != _order.rend(); ++it)
         {
-            try
+            if (auto found = _services.find(*it); found != _services.end())
             {
-                delete service;
-            }
-            catch (const std::exception& e)
-            {
-                NULL_SAFE_CALL(Get<Logger::LoggerService>(), Err(std::string("Cleanup failure: ") + e.what()));
+                try
+                {
+                    delete found->second;
+                }
+                catch (const std::exception& e)
+                {
+                    NULL_SAFE_CALL(Get<Logger::LoggerService>(), Err(std::string("Cleanup failure: ") + e.what()));
+                }
+                _services.erase(found);
             }
         }
 
-        _services.clear();
         _servicesNamed.clear();
     }
 }

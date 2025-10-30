@@ -5,6 +5,8 @@
 #include <ranges>
 #include <string>
 #include <typeindex>
+#include <unordered_map>
+#include <vector>
 #include <dbus/dbus.h>
 
 #include "../globals.h"
@@ -55,6 +57,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             dbus_error_free(&err); // TODO: LOG
         }
 
+        void SubscribeToSignal(const std::string& signalName);
+
         virtual bool HandleMethodCall(DBusMessage* message) = 0;
         virtual std::string GetName() = 0;
 
@@ -86,6 +90,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
                 return nullptr;
 
             T* instance = new T(this, _dbusInitialized ? _conn : nullptr);
+            _order.push_back(key);
             _services.emplace(key, instance);
             _servicesNamed.emplace(Service::GetFullInterfaceName(instance), instance);
 
@@ -109,15 +114,24 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             return nullptr;
         }
 
+        void SubscribeServiceToSignal(const std::string& signalName, const std::string& serviceName)
+        {
+            _signalSubscribers[signalName].push_back(serviceName);
+        }
+
         [[nodiscard]] const std::map<std::type_index, Service*>& List() const { return _services; }
 
         [[nodiscard]] const std::map<std::string, Service*>& ListNamed() const { return _servicesNamed; }
+
+        [[nodiscard]] const std::unordered_map<std::string, std::vector<std::string>>& ListSignalSubscribers() const { return _signalSubscribers; }
 
         ~ServiceManager();
 
     private:
         std::map<std::type_index, Service*> _services;
+        std::vector<std::type_index> _order;
         std::map<std::string, Service*> _servicesNamed;
+        std::unordered_map<std::string, std::vector<std::string>> _signalSubscribers; // key: interface.member (e.g. "org.freedesktop.systemd1.Manager.JobRemoved")
 
         DBusConnection* _conn = nullptr;
         bool _dbusInitialized = false;
