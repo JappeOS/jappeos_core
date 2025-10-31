@@ -98,7 +98,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         return false;
     }
 
-    // TODO: Auth if needed
     void PowerManagerService::Shutdown(DBusMessage* pmsg, const uid_t senderUid, const pid_t senderPid) const
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
@@ -149,7 +148,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             return;
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
 
         if (!reply)
@@ -172,19 +171,159 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         }
 
         dbus_message_unref(reply);
-        logger->Info("Successfully sent PowerOff message");
+        logger->Debug("Successfully sent PowerOff message");
     }
 
-    // TODO: Auth if needed
-    void PowerManagerService::Reboot(DBusMessage* msg, uid_t senderUid, pid_t senderPid)
+    void PowerManagerService::Reboot(DBusMessage* pmsg, const uid_t senderUid, const pid_t senderPid) const
     {
+        const auto logger = _serviceManager->Get<Logger::LoggerService>();
+        const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
 
+        if (!sessionMgr->IsManagedUserSession(senderUid))
+        {
+            logger->Err("Reboot message sent from unknown user");
+            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
+            return;
+        }
+
+        if (!sessionMgr->IsPrivilegedClientProcess(senderPid, true))
+        {
+            logger->Err("Reboot message sent from unauthorized process");
+            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
+            return;
+        }
+
+        DBusError err;
+        dbus_error_init(&err);
+
+        DBusMessage* msg = dbus_message_new_method_call(
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager",
+            "Reboot"
+        );
+
+        if (!msg)
+        {
+            const auto errmsg = "Failed to allocate D-Bus message for Reboot";
+            logger->Err(errmsg);
+            SendErrorReply(_conn, pmsg, DBUS_ERROR_NO_MEMORY, errmsg);
+            return;
+        }
+
+        dbus_bool_t interactive = FALSE;
+
+        if (!dbus_message_append_args(msg,
+                                      DBUS_TYPE_BOOLEAN, &interactive,
+                                      DBUS_TYPE_INVALID))
+        {
+            const auto errmsg = "Failed to append arguments to Reboot message";
+            logger->Err(errmsg);
+            dbus_message_unref(msg);
+            SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+            return;
+        }
+
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
+        dbus_message_unref(msg);
+
+        if (!reply)
+        {
+            if (dbus_error_is_set(&err))
+            {
+                const auto errmsg = "Reboot failed: " + std::string(err.message ? err.message : "unknown");
+                logger->Err(errmsg);
+                dbus_error_free(&err);
+                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+            }
+            else
+            {
+                const auto errmsg = "Reboot returned no reply";
+                logger->Err(errmsg);
+                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+            }
+
+            return;
+        }
+
+        dbus_message_unref(reply);
+        logger->Debug("Successfully sent Reboot message");
     }
 
-    // TODO: Auth if needed
-    void PowerManagerService::Suspend(DBusMessage* msg, uid_t senderUid, pid_t senderPid)
+    void PowerManagerService::Suspend(DBusMessage* pmsg, const uid_t senderUid, const pid_t senderPid) const
     {
+        const auto logger = _serviceManager->Get<Logger::LoggerService>();
+        const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
 
+        if (!sessionMgr->IsManagedUserSession(senderUid))
+        {
+            logger->Err("Suspend message sent from unknown user");
+            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
+            return;
+        }
+
+        if (!sessionMgr->IsPrivilegedClientProcess(senderPid, true))
+        {
+            logger->Err("Suspend message sent from unauthorized process");
+            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
+            return;
+        }
+
+        DBusError err;
+        dbus_error_init(&err);
+
+        DBusMessage* msg = dbus_message_new_method_call(
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager",
+            "Suspend"
+        );
+
+        if (!msg)
+        {
+            const auto errmsg = "Failed to allocate D-Bus message for Suspend";
+            logger->Err(errmsg);
+            SendErrorReply(_conn, pmsg, DBUS_ERROR_NO_MEMORY, errmsg);
+            return;
+        }
+
+        dbus_bool_t interactive = FALSE;
+
+        if (!dbus_message_append_args(msg,
+                                      DBUS_TYPE_BOOLEAN, &interactive,
+                                      DBUS_TYPE_INVALID))
+        {
+            const auto errmsg = "Failed to append arguments to Suspend message";
+            logger->Err(errmsg);
+            dbus_message_unref(msg);
+            SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+            return;
+        }
+
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
+        dbus_message_unref(msg);
+
+        if (!reply)
+        {
+            if (dbus_error_is_set(&err))
+            {
+                const auto errmsg = "Suspend failed: " + std::string(err.message ? err.message : "unknown");
+                logger->Err(errmsg);
+                dbus_error_free(&err);
+                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+            }
+            else
+            {
+                const auto errmsg = "Suspend returned no reply";
+                logger->Err(errmsg);
+                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+            }
+
+            return;
+        }
+
+        dbus_message_unref(reply);
+        logger->Debug("Successfully sent Suspend message");
     }
 
 }

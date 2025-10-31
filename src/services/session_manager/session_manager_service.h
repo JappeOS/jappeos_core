@@ -16,7 +16,8 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 {
-    struct PamConversationCtx {
+    struct PamConversationCtx
+    {
         std::string password;
     };
 
@@ -29,6 +30,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::string seat;
         std::vector<pid_t> privilegedClientProcesses;
     };
+
+    class LoginManager;
 
     // TODO: [NEW] GET THE PID(S) OF TRUSTED CLIENTS USING D-BUS SIGNALS!
     // TODO: Implement D-Bus signals
@@ -100,14 +103,30 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         [[nodiscard]] std::string GenerateFallbackSessionId() const;
         int FindFreeTTY();
         bool GetSessionIdByUnitName(const std::string& unitName, std::string& outSessionId);
-        std::optional<pid_t> GetParentPid(pid_t pid) const;
+        [[nodiscard]] std::optional<pid_t> GetParentPid(pid_t pid) const;
 
     private:
         std::map<std::string, pam_handle_t*> _activePAMHandles;
         std::map<std::string, SessionInfo> _sessions;
         std::vector<std::string> _pendingUnits;
+        LoginManager* _loginManager;
         std::string _greeterSessionID;
         bool _isGreeterActive = false;
         bool _isLiveEnvironment;
+    };
+
+    class LoginManager
+    {
+    public:
+        explicit LoginManager(SessionManagerService* sessionManager, DBusConnection* conn);
+        ~LoginManager();
+
+        void AddUser(DBusMessage* msg, uid_t callerUid);
+        void RemoveUser(DBusMessage* msg, uid_t callerUid);
+        void ListUsers(DBusMessage* msg, uid_t callerUid);
+
+    private:
+        SessionManagerService* _sessionManager;
+        DBusConnection* _conn;
     };
 }

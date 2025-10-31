@@ -1,6 +1,7 @@
 #define GENERATE_ENUM_STRINGS
 #include "application.h"
 
+#include "services/account_manager/account_manager_service.h"
 #include "services/session_manager/session_manager_service.h"
 #include "services/watchdog/watchdog_service.h"
 #include "services/bsod/bsod_service.h"
@@ -212,6 +213,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         _serviceManager->Register<Services::Bsod::BsodService>();
         _serviceManager->Register<Services::Watchdog::WatchdogService>();
         _serviceManager->Register<Services::SessionManager::SessionManagerService>();
+        _serviceManager->Register<Services::AccountManager::AccountManagerService>();
         _serviceManager->Register<Services::PowerManager::PowerManagerService>();
     }
 

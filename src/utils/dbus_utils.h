@@ -5,6 +5,8 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Utils
 {
+    #define DBUS_DEFAULT_SAFE_TIMEOUT 5000
+
     class DBusUtils
     {
     public:

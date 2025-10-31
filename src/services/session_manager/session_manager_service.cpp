@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "../logger/logger_service.h"
+#include "../../utils/dbus_utils.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 {
@@ -67,11 +68,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         SubscribeToSignal("org.freedesktop.systemd1.Manager.JobRemoved");
 
+        _loginManager = new LoginManager(this, _conn);
+
         CreateLoginSession();
     }
 
     SessionManagerService::~SessionManagerService()
     {
+        delete _loginManager;
+
         // Stop all sessions
         for (auto& [id, sess] : _sessions)
         {
@@ -278,17 +283,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     bool SessionManagerService::HandleMethodCall(DBusMessage* msg)
     {
-        const char* msgType =
-            dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_METHOD_CALL ? "method_call" :
-            dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_SIGNAL ? "signal" :
-            dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_METHOD_RETURN ? "method_return" :
-            dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_ERROR ? "error" : "unknown";
-
-        _serviceManager->Get<Logger::LoggerService>()->Debug(
-            std::string("Received D-Bus message: type=") + msgType +
-            " interface=" + (dbus_message_get_interface(msg) ?: "null") +
-            " member=" + (dbus_message_get_member(msg) ?: "null"));
-
         if (!msg)
         {
             _serviceManager->Get<Logger::LoggerService>()->Err("HandleMethodCall called with null parameters");
@@ -304,8 +298,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 strcmp(iface, "org.freedesktop.systemd1.Manager") == 0 &&
                 strcmp(member, "JobRemoved") == 0)
             {
-                _serviceManager->Get<Logger::LoggerService>()->Debug("!!! OnJobRemoved PRE");
-
                 uint32_t id = 0;
                 const char* jobPath = nullptr;
                 const char* unitName = nullptr;
@@ -450,36 +442,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             }
 
             return ListSessions(msg, senderUid);
-        }
-        else if (strcmp(iface, "org.freedesktop.systemd1.Manager") == 0 &&
-                 strcmp(member, "JobRemoved") == 0)
-        {
-            _serviceManager->Get<Logger::LoggerService>()->Debug("!!! OnJobRemoved PRE"); // TODO: REM
-            uint32_t id = 0;
-            const char* jobPath = nullptr;
-            const char* unitName = nullptr;
-            const char* result = nullptr;
-
-            DBusError err2;
-            dbus_error_init(&err2);
-
-            if (!dbus_message_get_args(
-                    msg, &err2,
-                    DBUS_TYPE_UINT32, &id,
-                    DBUS_TYPE_OBJECT_PATH, &jobPath,
-                    DBUS_TYPE_STRING, &unitName,
-                    DBUS_TYPE_STRING, &result,
-                    DBUS_TYPE_INVALID))
-            {
-                SendErrorReply(_conn, msg, DBUS_ERROR_INVALID_ARGS, std::string("Failed to parse JobRemoved signal: ") +
-                              (err2.message ? err2.message : "unknown"));
-                dbus_error_free(&err2);
-                return true;
-            }
-
-            dbus_error_free(&err2);
-
-            OnJobRemoved(unitName, result);
         }
 
         _serviceManager->Get<Logger::LoggerService>()->Warn(std::string("Unknown DBus method called: ") + member);
@@ -1038,7 +1000,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         // Send message and wait for reply
-        reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, &err);
+        reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
         msg = nullptr;
 
@@ -1173,7 +1135,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
 
         if (!reply)
@@ -1348,7 +1310,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusError err;
         dbus_error_init(&err);
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
 
         if (!reply)
@@ -1611,7 +1573,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusError err;
         dbus_error_init(&err);
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, -1, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
 
         if (!reply)
@@ -1659,7 +1621,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return 0;
         }
 
-        reply = dbus_connection_send_with_reply_and_block(conn, msg, -1, &err);
+        reply = dbus_connection_send_with_reply_and_block(conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
 
         if (!reply)
@@ -1704,7 +1666,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return 0;
         }
 
-        reply = dbus_connection_send_with_reply_and_block(conn, msg, -1, &err);
+        reply = dbus_connection_send_with_reply_and_block(conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
 
         if (!reply)
