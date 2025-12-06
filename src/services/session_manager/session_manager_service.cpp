@@ -68,15 +68,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         SubscribeToSignal("org.freedesktop.systemd1.Manager.JobRemoved");
 
-        _loginManager = new LoginManager(this, _conn);
-
         CreateLoginSession();
     }
 
     SessionManagerService::~SessionManagerService()
     {
-        delete _loginManager;
-
         // Stop all sessions
         for (auto& [id, sess] : _sessions)
         {
