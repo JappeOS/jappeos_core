@@ -279,6 +279,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     void Application::HandleMethodCall(Services::Logger::LoggerService* logger, Services::Service* svc, DBusMessage* msg, const char* interface) const
     {
+        if (!msg)
+        {
+            NULL_SAFE_CALL(logger, Err(std::string("HandleMethodCall called with null parameters for service `" + svc->GetName() + "` with interface: ") + interface));;
+            return;
+        }
+
         try
         {
             if (!svc->HandleMethodCall(msg))

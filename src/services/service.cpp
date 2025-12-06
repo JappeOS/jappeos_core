@@ -5,6 +5,32 @@ using namespace JappeStudios::JappeOS::JappeOSCore::Services;
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services
 {
+
+    void Service::SendErrorReplyAndLog(DBusConnection* conn, DBusMessage* msg, const std::string& errorName, const std::string& errorMsg)
+    {
+        DBusMessage* error = dbus_message_new_error(
+            msg,
+            errorName.c_str(),
+            errorMsg.c_str()
+        );
+        dbus_connection_send(conn, error, nullptr);
+        dbus_connection_flush(conn);
+        dbus_message_unref(error);
+        _serviceManager->Get<Logger::LoggerService>()->Notice(
+            std::format("SendErrorReply(service='{}', errorName='{}', errorMsg='{}')", GetName(), errorName, errorMsg));
+    }
+
+    void Service::SendSuccessReplyAndLog(DBusConnection* conn, DBusMessage* msg, const std::string& message)
+    {
+        DBusMessage* reply = dbus_message_new_method_return(msg);
+        dbus_connection_send(conn, reply, nullptr);
+        dbus_connection_flush(conn);
+        dbus_message_unref(reply);
+        if (message.empty()) _serviceManager->Get<Logger::LoggerService>()->Debug("SendSuccessReply");
+        else                 _serviceManager->Get<Logger::LoggerService>()->Debug(
+                             std::format("SendSuccessReply(service='{}', msg='{}')", GetName(), message));
+    }
+
     void Service::SubscribeToSignal(const std::string& signalName) { _serviceManager->SubscribeServiceToSignal(signalName, GetFullInterfaceName(this)); }
 
     ServiceManager::~ServiceManager()
@@ -27,4 +53,5 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
 
         _servicesNamed.clear();
     }
+
 }

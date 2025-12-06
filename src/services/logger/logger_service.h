@@ -81,7 +81,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
             }
 
             // Send success reply
-            SendSuccessReply(_conn, msg);
+            SendSuccessReplyAndLog(_conn, msg);
             return true;
         }
 

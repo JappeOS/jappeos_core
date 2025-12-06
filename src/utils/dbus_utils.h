@@ -5,11 +5,13 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Utils
 {
+    /// Defines a safe timeout to wait for a reply for.
     #define DBUS_DEFAULT_SAFE_TIMEOUT 5000
 
     class DBusUtils
     {
     public:
+        /// Returns the process ID that a message was sent from.
         static pid_t GetSenderPID(DBusConnection *conn, DBusMessage *msg)
         {
             const char *sender = dbus_message_get_sender(msg);

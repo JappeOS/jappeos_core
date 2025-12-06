@@ -79,11 +79,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     private:
         bool CreateLoginSession();
         bool StopLoginSession();
-        bool CreateSession(DBusMessage* msg, uid_t callerUid, const std::string& username, const std::string& password);
+        void CreateSession(DBusMessage* msg, uid_t callerUid, const std::string& username, const std::string& password);
         void SendDBusReply_CreateSession(DBusMessage* msg,
                                          const std::string& sessionId,
                                          uid_t uid,
-                                         const std::string& seat) const;
+                                         const std::string& seat);
         bool AuthenticateAndOpenPAMSession(const std::string& username, const std::string& password, pam_handle_t** out_pamh);
         bool SpawnUserSessionProcesses(bool isLoginSession,
                                        const std::string& username,
@@ -93,7 +93,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         bool StopSession(DBusMessage* msg, uid_t callerUid, const std::string& sessionId);
         bool TerminateUserSessionProcesses(const std::string& sessionId);
         bool PolkitAuthorizeStop(uid_t callerUid, const std::string& sessionId);
-        bool ListSessions(DBusMessage* msg, uid_t callerUid) const;
+        void ListSessions(DBusMessage* msg, uid_t callerUid);
         void OnJobRemoved(const std::string& unitName, const std::string& result);
         [[nodiscard]] bool IsGreeter(uid_t callerUid) const;
         [[nodiscard]] std::string QueryLogindSessionForUid(uid_t uid, std::string& outObjectPath) const;
@@ -109,24 +109,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::map<std::string, pam_handle_t*> _activePAMHandles;
         std::map<std::string, SessionInfo> _sessions;
         std::vector<std::string> _pendingUnits;
-        LoginManager* _loginManager;
         std::string _greeterSessionID;
         bool _isGreeterActive = false;
         bool _isLiveEnvironment;
     };
 
-    class LoginManager
-    {
-    public:
-        explicit LoginManager(SessionManagerService* sessionManager, DBusConnection* conn);
-        ~LoginManager();
-
-        void AddUser(DBusMessage* msg, uid_t callerUid);
-        void RemoveUser(DBusMessage* msg, uid_t callerUid);
-        void ListUsers(DBusMessage* msg, uid_t callerUid);
-
-    private:
-        SessionManagerService* _sessionManager;
-        DBusConnection* _conn;
-    };
 }

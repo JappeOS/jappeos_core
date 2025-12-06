@@ -20,32 +20,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
     class Service
     {
     public:
+        /// Gets the full D-Bus interface name of a specific service.
         static std::string GetFullInterfaceName(Service* service) { return std::string(DBUS_INTERFACE) + "." + service->GetName(); }
-
-        static void SendErrorReply(DBusConnection* conn, DBusMessage* msg, const std::string& errorName, const std::string& errorMsg)
-        {
-            DBusMessage* error = dbus_message_new_error(
-                msg,
-                errorName.c_str(),
-                errorMsg.c_str()
-            );
-            dbus_connection_send(conn, error, nullptr);
-            dbus_connection_flush(conn);
-            dbus_message_unref(error);
-        }
-
-        static void SendSuccessReply(DBusConnection* conn, DBusMessage* msg)
-        {
-            DBusMessage* reply = dbus_message_new_method_return(msg);
-            dbus_connection_send(conn, reply, nullptr);
-            dbus_connection_flush(conn);
-            dbus_message_unref(reply);
-        }
 
     public:
         explicit Service(ServiceManager* serviceManager, DBusConnection* conn) : _serviceManager(serviceManager), _conn(conn) {}
         virtual ~Service() = default;
 
+        /// Initializes D-Bus and adds match rule for this service.
         virtual void InitDBus(DBusConnection* connection)
         {
             DBusError err;
@@ -57,9 +39,22 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             dbus_error_free(&err); // TODO: LOG
         }
 
+        /// Sends an error reply to the connection for a message. Logging before or after calling this method is not required,
+        /// since this method logs the `errorName` and `errorMsg` parameters automatically.
+        void SendErrorReplyAndLog(DBusConnection* conn, DBusMessage* msg, const std::string& errorName, const std::string& errorMsg);
+
+        /// Sends a success reply to the connection for a message. Logging before or after calling this method is not required,
+        /// since this method logs the `message` parameter automatically.
+        void SendSuccessReplyAndLog(DBusConnection* conn, DBusMessage* msg, const std::string& message = std::string());
+
+        /// Allows a signal to be received through `HandleMethodCall`, match rules still need to be added separately.
+        /// `signalName` is in the following format: "<interface>.<member>".
         void SubscribeToSignal(const std::string& signalName);
 
+        /// Handles incoming D-Bus messages and signals.
         virtual bool HandleMethodCall(DBusMessage* message) = 0;
+
+        /// Returns the name of the service.
         virtual std::string GetName() = 0;
 
     protected:
@@ -70,6 +65,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
     class ServiceManager
     {
     public:
+        /// Initializes D-Bus for all services.
         void InitDBus(DBusConnection* conn)
         {
             _conn = conn;
@@ -80,6 +76,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             _dbusInitialized = true;
         }
 
+        /// Registers a service that lives for the entire lifecycle of this daemon.
         template <typename T>
         std::enable_if_t<std::is_base_of_v<Service, T>, T*> Register()
         {
@@ -100,6 +97,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             return instance;
         }
 
+        /// Returns a pointer to a service by-type.
         template <typename T>
         std::enable_if_t<std::is_base_of_v<Service, T>, T*> Get()
         {
@@ -114,15 +112,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             return nullptr;
         }
 
+        /// Subscribes a service to a signal. `signalName` is in the following format: "<interface>.<member>".
         void SubscribeServiceToSignal(const std::string& signalName, const std::string& serviceName)
         {
             _signalSubscribers[signalName].push_back(serviceName);
         }
 
+        /// Returns a map of all services.
         [[nodiscard]] const std::map<std::type_index, Service*>& List() const { return _services; }
 
+        /// Returns a map of service names and service objects.
         [[nodiscard]] const std::map<std::string, Service*>& ListNamed() const { return _servicesNamed; }
 
+        /// Returns a map of signal subscribers, with the key being the signal name ("<interface>.<member>") and the
+        /// value being a vector of full interface names for the subscribers to that signal name.
         [[nodiscard]] const std::unordered_map<std::string, std::vector<std::string>>& ListSignalSubscribers() const { return _signalSubscribers; }
 
         ~ServiceManager();

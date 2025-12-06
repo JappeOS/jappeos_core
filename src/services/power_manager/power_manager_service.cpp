@@ -19,29 +19,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
 
     bool PowerManagerService::HandleMethodCall(DBusMessage* msg)
     {
-        if (!msg)
-        {
-            _serviceManager->Get<Logger::LoggerService>()->Err("HandleMethodCall called with null parameters");
-            return false;
-        }
-
         const char* sender = dbus_message_get_sender(msg);
         if (!sender)
         {
-            _serviceManager->Get<Logger::LoggerService>()->Warn("DBus message without sender");
-            SendErrorReply(_conn, msg, DBUS_ERROR_ACCESS_DENIED, "No sender");
+            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_ACCESS_DENIED, "No sender");
             return true;
         }
 
         DBusError error;
         dbus_error_init(&error);
-        uid_t senderUid = dbus_bus_get_unix_user(_conn, sender, &error);
+        const uid_t senderUid = dbus_bus_get_unix_user(_conn, sender, &error);
         if (dbus_error_is_set(&error))
         {
-            _serviceManager->Get<Logger::LoggerService>()->Err(
-            std::string("Failed to get UID for sender ") + sender + ": " + (error.message ? error.message : "unknown"));
+            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_ACCESS_DENIED, std::string("Failed to get UID for sender ") + sender + ": " + (error.message ? error.message : "unknown"));
             dbus_error_free(&error);
-            SendErrorReply(_conn, msg, DBUS_ERROR_ACCESS_DENIED, "Could not get UID");
             return true;
         }
 
@@ -50,8 +41,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         const char* member = dbus_message_get_member(msg);
         if (!member)
         {
-            _serviceManager->Get<Logger::LoggerService>()->Warn("DBus message without member field");
-            SendErrorReply(_conn, msg, DBUS_ERROR_UNKNOWN_METHOD, "No method specified");
+            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_METHOD, "No method specified");
             return true;
         }
 
@@ -61,7 +51,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             DBusMessageIter iter;
             if (dbus_message_iter_init(msg, &iter))
             {
-                SendErrorReply(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Shutdown expects no arguments");
+                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Shutdown expects no arguments");
                 return true;
             }
 
@@ -73,7 +63,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             DBusMessageIter iter;
             if (dbus_message_iter_init(msg, &iter))
             {
-                SendErrorReply(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Reboot expects no arguments");
+                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Reboot expects no arguments");
                 return true;
             }
 
@@ -85,7 +75,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             DBusMessageIter iter;
             if (dbus_message_iter_init(msg, &iter))
             {
-                SendErrorReply(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Suspend expects no arguments");
+                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Suspend expects no arguments");
                 return true;
             }
 
@@ -93,27 +83,24 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             return true;
         }
 
-        _serviceManager->Get<Logger::LoggerService>()->Warn(std::string("Unknown DBus method called: ") + member);
-        SendErrorReply(_conn, msg, DBUS_ERROR_UNKNOWN_METHOD, "Unknown method");
+        SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_METHOD, std::string("Unknown DBus method called: ") + member);
         return false;
     }
 
-    void PowerManagerService::Shutdown(DBusMessage* pmsg, const uid_t senderUid, const pid_t senderPid) const
+    void PowerManagerService::Shutdown(DBusMessage* pmsg, const uid_t senderUid, const pid_t senderPid)
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
         const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
 
         if (!sessionMgr->IsManagedUserSession(senderUid))
         {
-            logger->Err("PowerOff message sent from unknown user");
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
             return;
         }
 
         if (!sessionMgr->IsPrivilegedClientProcess(senderPid, true))
         {
-            logger->Err("PowerOff message sent from unauthorized process");
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
             return;
         }
 
@@ -131,7 +118,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         {
             const auto errmsg = "Failed to allocate D-Bus message for PowerOff";
             logger->Err(errmsg);
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_NO_MEMORY, errmsg);
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_NO_MEMORY, errmsg);
             return;
         }
 
@@ -144,7 +131,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             const auto errmsg = "Failed to append arguments to PowerOff message";
             logger->Err(errmsg);
             dbus_message_unref(msg);
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
             return;
         }
 
@@ -158,13 +145,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
                 const auto errmsg = "PowerOff failed: " + std::string(err.message ? err.message : "unknown");
                 logger->Err(errmsg);
                 dbus_error_free(&err);
-                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+                SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
             }
             else
             {
                 const auto errmsg = "PowerOff returned no reply";
                 logger->Err(errmsg);
-                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+                SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
             }
 
             return;
@@ -174,22 +161,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         logger->Debug("Successfully sent PowerOff message");
     }
 
-    void PowerManagerService::Reboot(DBusMessage* pmsg, const uid_t senderUid, const pid_t senderPid) const
+    void PowerManagerService::Reboot(DBusMessage* pmsg, const uid_t senderUid, const pid_t senderPid)
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
         const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
 
         if (!sessionMgr->IsManagedUserSession(senderUid))
         {
-            logger->Err("Reboot message sent from unknown user");
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
             return;
         }
 
         if (!sessionMgr->IsPrivilegedClientProcess(senderPid, true))
         {
-            logger->Err("Reboot message sent from unauthorized process");
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
             return;
         }
 
@@ -207,7 +192,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         {
             const auto errmsg = "Failed to allocate D-Bus message for Reboot";
             logger->Err(errmsg);
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_NO_MEMORY, errmsg);
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_NO_MEMORY, errmsg);
             return;
         }
 
@@ -220,7 +205,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             const auto errmsg = "Failed to append arguments to Reboot message";
             logger->Err(errmsg);
             dbus_message_unref(msg);
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
             return;
         }
 
@@ -234,13 +219,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
                 const auto errmsg = "Reboot failed: " + std::string(err.message ? err.message : "unknown");
                 logger->Err(errmsg);
                 dbus_error_free(&err);
-                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+                SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
             }
             else
             {
                 const auto errmsg = "Reboot returned no reply";
                 logger->Err(errmsg);
-                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+                SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
             }
 
             return;
@@ -250,22 +235,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         logger->Debug("Successfully sent Reboot message");
     }
 
-    void PowerManagerService::Suspend(DBusMessage* pmsg, const uid_t senderUid, const pid_t senderPid) const
+    void PowerManagerService::Suspend(DBusMessage* pmsg, const uid_t senderUid, const pid_t senderPid)
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
         const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
 
         if (!sessionMgr->IsManagedUserSession(senderUid))
         {
-            logger->Err("Suspend message sent from unknown user");
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
             return;
         }
 
         if (!sessionMgr->IsPrivilegedClientProcess(senderPid, true))
         {
-            logger->Err("Suspend message sent from unauthorized process");
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
             return;
         }
 
@@ -283,7 +266,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         {
             const auto errmsg = "Failed to allocate D-Bus message for Suspend";
             logger->Err(errmsg);
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_NO_MEMORY, errmsg);
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_NO_MEMORY, errmsg);
             return;
         }
 
@@ -296,7 +279,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             const auto errmsg = "Failed to append arguments to Suspend message";
             logger->Err(errmsg);
             dbus_message_unref(msg);
-            SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
             return;
         }
 
@@ -310,13 +293,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
                 const auto errmsg = "Suspend failed: " + std::string(err.message ? err.message : "unknown");
                 logger->Err(errmsg);
                 dbus_error_free(&err);
-                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+                SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
             }
             else
             {
                 const auto errmsg = "Suspend returned no reply";
                 logger->Err(errmsg);
-                SendErrorReply(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
+                SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, errmsg);
             }
 
             return;

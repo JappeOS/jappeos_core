@@ -13,8 +13,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         std::string GetName() override { return "PowerManagerService"; }
 
     private:
-        void Shutdown(DBusMessage* pmsg, uid_t senderUid, pid_t senderPid) const;
-        void Reboot(DBusMessage* msg, uid_t senderUid, pid_t senderPid) const;
-        void Suspend(DBusMessage* msg, uid_t senderUid, pid_t senderPid) const;
+        void Shutdown(DBusMessage* pmsg, uid_t senderUid, pid_t senderPid);
+        void Reboot(DBusMessage* msg, uid_t senderUid, pid_t senderPid);
+        void Suspend(DBusMessage* msg, uid_t senderUid, pid_t senderPid);
     };
 }
