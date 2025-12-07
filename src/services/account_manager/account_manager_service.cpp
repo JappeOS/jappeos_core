@@ -251,11 +251,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         DBusError err;
         dbus_error_init(&err);
 
-        // Create the DBus method call to org.freedesktop.Accounts.Manager.CreateUser
+        // Create the DBus method call to org.freedesktop.Accounts.CreateUser
         DBusMessage* msg = dbus_message_new_method_call(
             "org.freedesktop.Accounts",              // Service
             "/org/freedesktop/Accounts",             // Path
-            "org.freedesktop.Accounts.Manager",      // Interface
+            "org.freedesktop.Accounts",      // Interface
             "CreateUser"                             // Method
         );
 
@@ -342,6 +342,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         // TODO
     }
 
+    // TODO: use ListUsers
     void AccountManagerService::ListUsersDbus(DBusMessage* pmsg)
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
