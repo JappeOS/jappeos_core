@@ -33,12 +33,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
                      pid_t senderPid,
                      const std::string& username,
                      const std::string& realName);
-        bool AddUser(const std::string& username, const std::string& realName, std::string& outObjectPath) const;
+        bool AddUser(const std::string& username, const std::string& realName, std::string& outObjectPath, bool cache = true) const;
         void RemoveUser(DBusMessage* pmsg, uid_t senderUid, pid_t senderPid);
         void ListUsersDbus(DBusMessage* pmsg);
         bool ListUsers(std::vector<std::string>& outObjectPaths) const;
         void GetUserPropertyDbus(DBusMessage* pmsg, const std::string& userObject, const std::string& property);
         bool GetUserProperty(const std::string& userObject, const std::string& property, DBusValue& outValue) const;
+        [[nodiscard]] bool CacheUser(const std::string& username) const;
         [[nodiscard]] bool SetUserPassword(const std::string& userObjectPath,
                      const std::string& cryptedPassword,
                      const std::string& hint) const;

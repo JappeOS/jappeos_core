@@ -236,9 +236,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         {
             SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Only root may add users");
         }
+
+        // TODO
     }
 
-    bool AccountManagerService::AddUser(const std::string& username, const std::string& realName, std::string& outObjectPath) const
+    bool AccountManagerService::AddUser(const std::string& username, const std::string& realName, std::string& outObjectPath, bool cache) const
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
 
@@ -255,7 +257,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         DBusMessage* msg = dbus_message_new_method_call(
             "org.freedesktop.Accounts",              // Service
             "/org/freedesktop/Accounts",             // Path
-            "org.freedesktop.Accounts",      // Interface
+            "org.freedesktop.Accounts",              // Interface
             "CreateUser"                             // Method
         );
 
@@ -306,7 +308,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             return false;
         }
 
-        // Optionally inspect the reply; CreateUser returns an object path
         const char* newUserPath = nullptr;
         if (dbus_message_get_args(reply, &err,
                                   DBUS_TYPE_OBJECT_PATH, &newUserPath,
@@ -329,6 +330,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         }
 
         dbus_message_unref(reply);
+
+        if (cache && !CacheUser(username))
+        {
+            logger->Err("Failed to cache user in CreateUser for: " + username);
+            return false;
+        }
+
         return true;
     }
 
@@ -659,6 +667,72 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
         dbus_message_unref(reply);
         outValue = out;
+        return true;
+    }
+
+    bool AccountManagerService::CacheUser(const std::string& username) const
+    {
+        const auto logger = _serviceManager->Get<Logger::LoggerService>();
+
+        if (username.empty())
+        {
+            logger->Warn("CacheUser called with an empty username");
+            return false;
+        }
+
+        DBusError err;
+        dbus_error_init(&err);
+
+        // Create the DBus method call to org.freedesktop.Accounts.CacheUser
+        DBusMessage* msg = dbus_message_new_method_call(
+            "org.freedesktop.Accounts",              // Service
+            "/org/freedesktop/Accounts",             // Path
+            "org.freedesktop.Accounts",              // Interface
+            "CacheUser"                              // Method
+        );
+
+        if (!msg)
+        {
+            logger->Err("Failed to allocate D-Bus message for CacheUser");
+            return false;
+        }
+
+        const char* name = username.c_str();
+
+        if (!dbus_message_append_args(msg,
+                                      DBUS_TYPE_STRING, &name,
+                                      DBUS_TYPE_INVALID))
+        {
+            logger->Err("Failed to append arguments to CacheUser message for username: " + username);
+            dbus_message_unref(msg);
+            return false;
+        }
+
+        // Send the message and wait for reply
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(
+            _conn,
+            msg,
+            DBUS_DEFAULT_SAFE_TIMEOUT,
+            &err
+        );
+        dbus_message_unref(msg);
+
+        if (!reply)
+        {
+            if (dbus_error_is_set(&err))
+            {
+                logger->Err("CacheUser failed for username '" + username + "': " +
+                    std::string(err.message ? err.message : "unknown error"));
+                dbus_error_free(&err);
+            }
+            else
+            {
+                logger->Err("CacheUser returned no reply for username: " + username);
+            }
+            return false;
+        }
+
+        dbus_message_unref(reply);
         return true;
     }
 
