@@ -492,7 +492,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const std::string sessionId = QueryLogindSessionForUid(pwd->pw_uid, objectPath);
         if (sessionId.empty())
         {
-            logger->Err("No logind session found for greeter UID: " + std::to_string(pwd->pw_uid));
+            logger->Err("No logind session found for user UID: " + std::to_string(pwd->pw_uid));
             cleanupPam();
             SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_FAILED, "Could not determine session ID");
             return;
