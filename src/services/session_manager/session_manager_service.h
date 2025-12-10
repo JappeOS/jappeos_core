@@ -70,6 +70,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     public:
         const char* PAM_GREETER_SERVICE = "jappeos-greeter";
+        const char* PAM_LOGIN_SERVICE = "jappeos-login";
         const char* JOS_DESKTOP_BINARY = "/jappeos/desktop/desktop";
         const char* JOS_DESKTOP_NAME = "JappeOS Desktop";
         const char* JOS_GREETER_BINARY = "/jappeos/greeter/greeter";
@@ -84,7 +85,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                          const std::string& sessionId,
                                          uid_t uid,
                                          const std::string& seat);
-        bool AuthenticateAndOpenPAMSession(const std::string& username, const std::string& password, pam_handle_t** out_pamh);
+        bool AuthenticateAndOpenPAMSession(const std::string& service, const std::string& username, const std::string& password, pam_handle_t** out_pamh);
         bool SpawnUserSessionProcesses(bool isLoginSession,
                                        const std::string& username,
                                        const std::string& sessionId,

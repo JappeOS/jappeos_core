@@ -135,7 +135,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         };
 
         logger->Debug("PRE AuthenticateAndOpenPAMSession"); // TODO: REM
-        if (!AuthenticateAndOpenPAMSession(JOS_GREETER_USER, "", &pamh)) // pamh is nullptr
+        if (!AuthenticateAndOpenPAMSession(PAM_GREETER_SERVICE, JOS_GREETER_USER, "", &pamh)) // pamh is nullptr
         {
             logger->Err("Failed to open PAM session for greeter");
             return false;
@@ -479,7 +479,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             }
         };
 
-        if (!AuthenticateAndOpenPAMSession(username, password, &pamh))
+        if (!AuthenticateAndOpenPAMSession(PAM_LOGIN_SERVICE, username, password, &pamh))
         {
             logger->Warn("Authentication failed for user " + username);
             SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_AUTH_FAILED, "Authentication failed");
@@ -604,7 +604,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         dbus_message_unref(reply);
     }
 
-    bool SessionManagerService::AuthenticateAndOpenPAMSession(const std::string& username,
+    /*bool SessionManagerService::AuthenticateAndOpenPAMSession(const std::string& username,
                                                           const std::string& password,
                                                           pam_handle_t** out_pamh)
     {
@@ -660,7 +660,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }*/
 
-        const int tty_num = FindFreeTTY();
+        /*const int tty_num = FindFreeTTY();
         const std::string ttyPath = tty_num > 0
             ? "/dev/tty" + std::to_string(tty_num)
             : "/dev/tty1"; // fallback
@@ -682,6 +682,94 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         *out_pamh = pamh;
         return true;
+    }*/
+
+    // TODO: Support password expiration
+    bool SessionManagerService::AuthenticateAndOpenPAMSession(const std::string& service,
+                                                          const std::string& username,
+                                                          const std::string& password,
+                                                          pam_handle_t** out_pamh)
+    {
+        const auto logger = _serviceManager->Get<Logger::LoggerService>();
+
+        struct pam_conv conv;
+        PamConversationCtx convctx{password};
+        conv.conv = &pam_conversation;
+        conv.appdata_ptr = &convctx;
+        bool pamStarted = false;
+
+        const int tty_num = FindFreeTTY();
+        const std::string ttyPath = tty_num > 0
+            ? "/dev/tty" + std::to_string(tty_num)
+            : "/dev/tty1"; // fallback
+
+        pam_handle_t* pamh = nullptr;
+        int retval = pam_start(service.c_str(), username.c_str(), &conv, &pamh);
+        if (retval != PAM_SUCCESS)
+        {
+            logger->Err("pam_start failed for " + username + ": " + pam_strerror(nullptr, retval));
+            goto error;
+        }
+
+        pamStarted = true;
+
+        retval = pam_set_item(pamh, PAM_RUSER, username.c_str());
+        if (retval != PAM_SUCCESS)
+        {
+            logger->Err("pam_set_item failed for " + username + ": " + pam_strerror(pamh, retval));
+            goto error;
+        }
+
+        retval = pam_set_item(pamh, PAM_TTY, ttyPath.c_str());
+        if (retval != PAM_SUCCESS)
+        {
+            logger->Warn("pam_set_item failed for " + username + ": " + pam_strerror(pamh, retval));
+            goto error;
+        }
+
+        retval = pam_authenticate(pamh, 0);
+        if (retval != PAM_SUCCESS)
+        {
+            logger->Warn("pam_authenticate failed for " + username + ": " + pam_strerror(pamh, retval));
+            goto error;
+        }
+
+        retval = pam_acct_mgmt(pamh, 0);
+        if (retval != PAM_SUCCESS)
+        {
+            logger->Warn("pam_acct_mgmt failed for " + username + ": " + pam_strerror(pamh, retval));
+            goto error;
+        }
+
+        retval = pam_putenv(pamh, "XDG_SESSION_TYPE=wayland");
+        if (retval != PAM_SUCCESS)
+        {
+            logger->Warn("pam_putenv failed for " + username + ": " + pam_strerror(pamh, retval));
+            goto error;
+        }
+
+        retval = pam_putenv(pamh, ("XDG_VTNR=" + std::to_string(tty_num)).c_str());
+        if (retval != PAM_SUCCESS)
+        {
+            logger->Warn("pam_putenv failed for " + username + ": " + pam_strerror(pamh, retval));
+            goto error;
+        }
+
+        retval = pam_open_session(pamh, 0);
+        if (retval != PAM_SUCCESS)
+        {
+            logger->Warn("pam_open_session failed for " + username + ": " + pam_strerror(pamh, retval));
+            goto error;
+        }
+
+        *out_pamh = pamh;
+        explicit_bzero(convctx.password.data(), convctx.password.size());
+        return true;
+
+        error:
+        explicit_bzero(convctx.password.data(), convctx.password.size());
+        if (pamStarted) pam_end(pamh, retval);
+        return false;
     }
 
     bool SessionManagerService::SpawnUserSessionProcesses(bool isLoginSession,
@@ -1362,6 +1450,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 logger->Err("Object path expected");
 
             if (sessionId) logger->Debug("-> Session ID: " + std::string(sessionId)); // TODO: REM
+            if (sessionUid) logger->Debug("   Session UID: " + std::to_string(sessionUid)); // TODO: REM
+            else logger->Debug("   <no uid>");
 
             if (sessionUid == uid && sessionId && seatId && *seatId != '\0') // TODO: MIGHT RETURN WRONG SESSION (THE MANAGER ONLY ONE)
             {
