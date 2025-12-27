@@ -26,15 +26,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::string username;
         std::string scopeName;
         uid_t uid;
-        pam_handle_t* pam_handle;
+        pid_t leaderPid;
+        int controlFd;
         std::string seat;
         std::vector<pid_t> privilegedClientProcesses;
     };
 
     class LoginManager;
 
-    // TODO: [NEW] GET THE PID(S) OF TRUSTED CLIENTS USING D-BUS SIGNALS!
-    // TODO: Implement D-Bus signals
+    // TODO: SEVERE: FIX INFINITE LOOP OR FREEZE
     // Add comprehensive error handling throughout
     // Implement Polkit authorization for session management
     // Add logging for all major operations
@@ -60,7 +60,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         explicit SessionManagerService(ServiceManager* serviceManager, DBusConnection* conn);
         ~SessionManagerService() override;
 
-        bool HandleMethodCall(DBusMessage* msg) override;
+        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override;
         std::string GetName() override { return "SessionManagerService"; }
 
         [[nodiscard]] bool IsLiveEnvironment() const { return _isLiveEnvironment; }
@@ -85,14 +85,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                          const std::string& sessionId,
                                          uid_t uid,
                                          const std::string& seat);
-        bool AuthenticateAndOpenPAMSession(const std::string& service, const std::string& username, const std::string& password, pam_handle_t** out_pamh);
+        bool AuthenticateAndOpenPAMSession(const std::string& service,
+                                           const std::string& username,
+                                           const std::string& password,
+                                           int& out_controlFd,
+                                           pid_t& out_childPid);
         bool SpawnUserSessionProcesses(bool isLoginSession,
                                        const std::string& username,
                                        const std::string& sessionId,
                                        const std::string& seat,
                                        std::string& outServiceName) const;
-        bool StopSession(DBusMessage* msg, uid_t callerUid, const std::string& sessionId);
+        void StopSessionDbus(DBusMessage* msg, uid_t callerUid, const std::string& sessionId);
+        bool StopSession(const std::string& sessionId, SessionInfo& session);
         bool TerminateUserSessionProcesses(const std::string& sessionId);
+        void TerminatePAMForSession(SessionInfo& session);
         bool PolkitAuthorizeStop(uid_t callerUid, const std::string& sessionId);
         void ListSessions(DBusMessage* msg, uid_t callerUid);
         void OnJobRemoved(const std::string& unitName, const std::string& result);

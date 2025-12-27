@@ -1,6 +1,8 @@
 #include "session_manager_service.h"
 
 #include <algorithm>
+#include <csignal>
+#include <sys/wait.h>
 
 #include "../logger/logger_service.h"
 #include "../../utils/dbus_utils.h"
@@ -66,6 +68,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             dbus_error_free(&err);
         }
 
+        _isLiveEnvironment = false;
         SubscribeToSignal("org.freedesktop.systemd1.Manager.JobRemoved");
 
         CreateLoginSession();
@@ -74,23 +77,24 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     SessionManagerService::~SessionManagerService()
     {
         // Stop all sessions
+        const auto logger = _serviceManager->Get<Logger::LoggerService>();
         for (auto& [id, sess] : _sessions)
         {
-            TerminateUserSessionProcesses(id);
-            if (sess.pam_handle)
+            // --- 1) Terminate processes ---
+            if (!TerminateUserSessionProcesses(_greeterSessionID))
             {
-                if (const int rc1 = pam_close_session(sess.pam_handle, 0); rc1 != PAM_SUCCESS)
-                    _serviceManager->Get<Logger::LoggerService>()->Warn("pam_close_session returned error: " + std::to_string(rc1));
-
-                if (const int rc2 = pam_end(sess.pam_handle, PAM_SUCCESS); rc2 != PAM_SUCCESS)
-                    _serviceManager->Get<Logger::LoggerService>()->Warn("pam_end returned error: " + std::to_string(rc2));
-
-                sess.pam_handle = nullptr;
+                logger->Warn("Failed to terminate processes for session " + _greeterSessionID);
+                // Continue cleanup anyway, but client will know something went wrong
             }
-        }
-        _sessions.clear();
 
-        StopLoginSession();
+            // --- 2) Signal child to clean up PAM and exit ---
+            TerminatePAMForSession(sess);
+        }
+
+        _activePAMHandles.clear();
+        _sessions.clear();
+        _greeterSessionID = {};
+        _isGreeterActive = false;
     }
 
     bool SessionManagerService::CreateLoginSession()
@@ -104,7 +108,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         struct passwd* pwd = nullptr;
-        pam_handle_t* pamh = nullptr;
 
         // --- 1) Lookup UID ---
         logger->Debug("PRE getpwnam"); // TODO: REM
@@ -116,31 +119,50 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         // --- 2) PAM Authentication ---
-        bool pamOpened = false;
+        int controlFd = -1;
+        pid_t leaderPid = 0;
         auto cleanupPam = [&]()
         {
-            if (pamh)
+            // Always close the control FD if open
+            if (controlFd >= 0)
             {
-                if (pamOpened)
-                {
-                    if (const int rc1 = pam_close_session(pamh, 0); rc1 != PAM_SUCCESS)
-                        logger->Warn("pam_close_session failed: " + std::to_string(rc1));
-                }
-                if (const int rc2 = pam_end(pamh, PAM_SUCCESS); rc2 != PAM_SUCCESS)
-                    logger->Warn("pam_end failed: " + std::to_string(rc2));
+                constexpr char shutdown = '1';
+                write(controlFd, &shutdown, 1);
+                usleep(10000); // TODO PERFORMANCE: DO NOT SLEEP
+                close(controlFd);
+                controlFd = -1;
+            }
 
-                pamh = nullptr;
-                pamOpened = false;
+            // Kill child process if still running
+            if (leaderPid > 0)
+            {
+                // Wait for graceful exit (with timeout)
+                int status;
+                pid_t result = waitpid(leaderPid, &status, WNOHANG);
+                if (result == 0)
+                {
+                    // Child didn't exit quickly, wait a bit longer
+                    usleep(100000); // 100ms grace period
+                    result = waitpid(leaderPid, &status, WNOHANG);
+
+                    if (result == 0)
+                    {
+                        // Force kill if still alive
+                        kill(leaderPid, SIGKILL);
+                        waitpid(leaderPid, nullptr, 0);
+                    }
+                }
+                leaderPid = 0;
             }
         };
 
         logger->Debug("PRE AuthenticateAndOpenPAMSession"); // TODO: REM
-        if (!AuthenticateAndOpenPAMSession(PAM_GREETER_SERVICE, JOS_GREETER_USER, "", &pamh)) // pamh is nullptr
+        if (!AuthenticateAndOpenPAMSession(PAM_GREETER_SERVICE, JOS_GREETER_USER, "", controlFd, leaderPid))
         {
             logger->Err("Failed to open PAM session for greeter");
+            cleanupPam();
             return false;
         }
-        pamOpened = true;
 
         // --- 3) Session ID ---
         logger->Debug("PRE QueryLogindSessionForUid"); // TODO: REM
@@ -188,15 +210,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         // --- 7) Set current _greeterSession value ---
-        _sessions[sessionId] = { JOS_GREETER_USER, scopeName, static_cast<uid_t>(pwd->pw_uid), pamh, seat, {} };
+        _sessions[sessionId] = { JOS_GREETER_USER, scopeName, static_cast<uid_t>(pwd->pw_uid), leaderPid, controlFd, seat, {} };
         _greeterSessionID = sessionId;
         _pendingUnits.push_back(scopeName);
-        pamh = nullptr;
-        pamOpened = false;
+        controlFd = -1;
 
         // --- 8) Return success ---
         logger->Info("Greeter session initialized successfully");
-        cleanupPam();
         _isGreeterActive = true;
         return true;
     }
@@ -227,17 +247,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             // Continue cleanup anyway, but client will know something went wrong
         }
 
-        // --- 2) Close PAM session ---
-        if (session.pam_handle)
-        {
-            if (const int rc1 = pam_close_session(session.pam_handle, 0); rc1 != PAM_SUCCESS)
-                logger->Warn("pam_close_session failed for session " + _greeterSessionID + ": " + std::to_string(rc1));
-
-            if (const int rc2 = pam_end(session.pam_handle, PAM_SUCCESS); rc2 != PAM_SUCCESS)
-                logger->Warn("pam_end failed for session " + _greeterSessionID + ": " + std::to_string(rc2));
-
-            session.pam_handle = nullptr;
-        }
+        // --- 2) Signal child to clean up PAM and exit ---
+        TerminatePAMForSession(session);
 
         // --- 3) Cleanup and return ---
         _sessions.erase(it);
@@ -256,7 +267,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     {
         if (allowChildProcesses)
         {
-            _serviceManager->Get<Logger::LoggerService>()->Warn("Use of possibly unsafe option 'allowChildProcesses' on 'IsPrivilegedClientProcess'!");
+            _serviceManager->Get<Logger::LoggerService>()->Warn("Use of potentially unsafe option 'allowChildProcesses' on 'IsPrivilegedClientProcess'!");
         }
 
         return std::ranges::any_of(_sessions, [&](auto const& e)
@@ -277,8 +288,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         });
     }
 
-    bool SessionManagerService::HandleMethodCall(DBusMessage* msg)
+    bool SessionManagerService::HandleMethodCall(DBusMessage* msg, const std::string& subInterface)
     {
+        if (!subInterface.empty())
+        {
+            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
+            return true;
+        }
+
         if (dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_SIGNAL)
         {
             const char* iface = dbus_message_get_interface(msg);
@@ -415,7 +432,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 return true;
             }
 
-            return StopSession(msg, senderUid, sessionId);
+            StopSessionDbus(msg, senderUid, sessionId);
+            return true;
         }
         else if (strcmp(member, "ListSessions") == 0)
         {
@@ -460,32 +478,50 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const uid_t uid = pwd->pw_uid;
 
         // --- 3) PAM Authentication ---
-        pam_handle_t* pamh = nullptr;
-        bool pamOpened = false;
+        int controlFd = -1;
+        pid_t leaderPid = 0;
         auto cleanupPam = [&]()
         {
-            if (pamh)
+            // Always close the control FD if open
+            if (controlFd >= 0)
             {
-                if (pamOpened)
-                {
-                    if (const int rc1 = pam_close_session(pamh, 0); rc1 != PAM_SUCCESS)
-                        logger->Warn("pam_close_session failed: " + std::to_string(rc1));
-                }
-                if (const int rc2 = pam_end(pamh, PAM_SUCCESS); rc2 != PAM_SUCCESS)
-                    logger->Warn("pam_end failed: " + std::to_string(rc2));
+                constexpr char shutdown = '1';
+                write(controlFd, &shutdown, 1);
+                usleep(10000); // TODO PERFORMANCE: DO NOT SLEEP
+                close(controlFd);
+                controlFd = -1;
+            }
 
-                pamh = nullptr;
-                pamOpened = false;
+            // Kill child process if still running
+            if (leaderPid > 0)
+            {
+                // Wait for graceful exit (with timeout)
+                int status;
+                pid_t result = waitpid(leaderPid, &status, WNOHANG);
+                if (result == 0)
+                {
+                    // Child didn't exit quickly, wait a bit longer
+                    usleep(100000); // 100ms grace period
+                    result = waitpid(leaderPid, &status, WNOHANG);
+
+                    if (result == 0)
+                    {
+                        // Force kill if still alive
+                        kill(leaderPid, SIGKILL);
+                        waitpid(leaderPid, nullptr, 0);
+                    }
+                }
+                leaderPid = 0;
             }
         };
 
-        if (!AuthenticateAndOpenPAMSession(PAM_LOGIN_SERVICE, username, password, &pamh))
+        if (!AuthenticateAndOpenPAMSession(PAM_LOGIN_SERVICE, username, password, controlFd, leaderPid))
         {
             logger->Warn("Authentication failed for user " + username);
+            cleanupPam();
             SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_AUTH_FAILED, "Authentication failed");
             return;
         }
-        pamOpened = true;
 
         // --- 4) Session ID ---
         std::string objectPath;
@@ -544,20 +580,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         // --- 8) Insert into session map ---
-        _sessions[sessionId] = { username, scopeName, uid, pamh, seat, {} };
+        _sessions[sessionId] = { username, scopeName, uid, leaderPid, controlFd, seat, {} };
         _pendingUnits.push_back(scopeName);
-        // ownership of pamh now belongs to _sessions entry
-        pamh = nullptr;
-        pamOpened = false;
+        controlFd = -1;
 
         // --- 9) Manage greeter ---
-        if (_sessions.size() > 1 && !_isGreeterActive)
+        if (!StopLoginSession())
         {
-            if (!CreateLoginSession()) // TODO: Do not switch to login screen here. It's supposed to run in the background with multiple sessions.
-                logger->Warn("Failed to spawn greeter while creating new session");
+            logger->Warn("Failed to stop login session.");
         }
-        else
-            StopLoginSession();
 
         // --- 10) Send reply ---
         SendDBusReply_CreateSession(msg, sessionId, uid, seat);
@@ -685,10 +716,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     }*/
 
     // TODO: Support password expiration
-    bool SessionManagerService::AuthenticateAndOpenPAMSession(const std::string& service,
+    /*bool SessionManagerService::AuthenticateAndOpenPAMSession(const std::string& service,
                                                           const std::string& username,
                                                           const std::string& password,
-                                                          pam_handle_t** out_pamh)
+                                                          pam_handle_t** out_pamh,
+                                                          pid_t& out_childPid)
     {
         const auto logger = _serviceManager->Get<Logger::LoggerService>();
 
@@ -702,6 +734,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const std::string ttyPath = tty_num > 0
             ? "/dev/tty" + std::to_string(tty_num)
             : "/dev/tty1"; // fallback
+
+        pid_t pid;
+        char ok = '0';
 
         pam_handle_t* pamh = nullptr;
         int retval = pam_start(service.c_str(), username.c_str(), &conv, &pamh);
@@ -755,14 +790,45 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             goto error;
         }
 
-        retval = pam_open_session(pamh, 0);
-        if (retval != PAM_SUCCESS)
+        // Child session leader creates session
+        int pipefd[2];
+        pipe(pipefd);
+
+        pid = fork();
+        if (pid == -1)
+            goto error;
+
+        if (pid == 0)
         {
-            logger->Warn("pam_open_session failed for " + username + ": " + pam_strerror(pamh, retval));
+            // CHILD
+            close(pipefd[0]);
+
+            // Open session (THIS triggers logind session creation)
+            retval = pam_open_session(pamh, 0);
+
+            const char ok = (retval == PAM_SUCCESS) ? '1' : '0';
+            write(pipefd[1], &ok, 1);
+            close(pipefd[1]);
+
+            // Child must NOT exit now (session must remain active)
+            pause();
+            _exit(0);
+        }
+
+        close(pipefd[1]);
+
+        read(pipefd[0], &ok, 1);
+        close(pipefd[0]);
+
+        if (ok != '1')
+        {
+            kill(pid, SIGKILL);
+            waitpid(pid, nullptr, 0);
             goto error;
         }
 
         *out_pamh = pamh;
+        out_childPid = pid;
         explicit_bzero(convctx.password.data(), convctx.password.size());
         return true;
 
@@ -770,6 +836,149 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         explicit_bzero(convctx.password.data(), convctx.password.size());
         if (pamStarted) pam_end(pamh, retval);
         return false;
+    }*/
+
+    bool SessionManagerService::AuthenticateAndOpenPAMSession(const std::string& service,
+                                                          const std::string& username,
+                                                          const std::string& password,
+                                                          int& out_controlFd,
+                                                          pid_t& out_childPid)
+    {
+        const auto logger = _serviceManager->Get<Logger::LoggerService>();
+
+        struct pam_conv conv;
+        PamConversationCtx convctx{password};
+        conv.conv = &pam_conversation;
+        conv.appdata_ptr = &convctx;
+
+        const int tty_num = FindFreeTTY();
+        const std::string ttyPath = tty_num > 0
+            ? "/dev/tty" + std::to_string(tty_num)
+            : "/dev/tty1";
+
+        // Create communication pipes BEFORE any PAM operations
+        int status_pipe[2];  // For status communication
+        int control_pipe[2]; // For shutdown signaling
+
+        if (pipe(status_pipe) == -1 || pipe(control_pipe) == -1)
+        {
+            logger->Err("Failed to create pipes for session management");
+            return false;
+        }
+
+        pid_t pid = fork();
+        if (pid == -1)
+        {
+            close(status_pipe[0]); close(status_pipe[1]);
+            close(control_pipe[0]); close(control_pipe[1]);
+            logger->Err("fork() failed");
+            return false;
+        }
+
+        if (pid == 0)
+        {
+            // ===== CHILD PROCESS (Session Leader) =====
+            close(status_pipe[0]);   // Close read end of status pipe
+            close(control_pipe[1]);  // Close write end of control pipe
+
+            pam_handle_t* pamh = nullptr;
+            int retval;
+            char status = '0';
+
+            // Initialize PAM in child
+            retval = pam_start(service.c_str(), username.c_str(), &conv, &pamh);
+            if (retval != PAM_SUCCESS)
+            {
+                write(status_pipe[1], &status, 1);
+                close(status_pipe[1]);
+                close(control_pipe[0]);
+                _exit(1);
+            }
+
+            // Set PAM items
+            pam_set_item(pamh, PAM_RUSER, username.c_str());
+            pam_set_item(pamh, PAM_TTY, ttyPath.c_str());
+
+            // Authenticate
+            retval = pam_authenticate(pamh, 0);
+            if (retval != PAM_SUCCESS)
+            {
+                write(status_pipe[1], &status, 1);
+                close(status_pipe[1]);
+                close(control_pipe[0]);
+                pam_end(pamh, retval);
+                _exit(1);
+            }
+
+            // Account management
+            retval = pam_acct_mgmt(pamh, 0);
+            if (retval != PAM_SUCCESS)
+            {
+                write(status_pipe[1], &status, 1);
+                close(status_pipe[1]);
+                close(control_pipe[0]);
+                pam_end(pamh, retval);
+                _exit(1);
+            }
+
+            // Set environment
+            pam_putenv(pamh, "XDG_SESSION_TYPE=wayland");
+            pam_putenv(pamh, ("XDG_VTNR=" + std::to_string(tty_num)).c_str());
+
+            // Open session (creates logind session)
+            retval = pam_open_session(pamh, 0);
+            if (retval != PAM_SUCCESS)
+            {
+                write(status_pipe[1], &status, 1);
+                close(status_pipe[1]);
+                close(control_pipe[0]);
+                pam_end(pamh, retval);
+                _exit(1);
+            }
+
+            // Success! Notify parent
+            status = '1';
+            write(status_pipe[1], &status, 1);
+            close(status_pipe[1]);
+
+            // Wait for shutdown signal from parent
+            char shutdown_signal;
+            read(control_pipe[0], &shutdown_signal, 1);
+            close(control_pipe[0]);
+
+            // Clean up PAM session
+            pam_close_session(pamh, 0);
+            pam_end(pamh, PAM_SUCCESS);
+
+            _exit(0);
+        }
+
+        // ===== PARENT PROCESS =====
+        close(status_pipe[1]);   // Close write end of status pipe
+        close(control_pipe[0]);  // Close read end of control pipe
+
+        // Wait for child to complete PAM setup
+        char status;
+        const ssize_t bytes_read = read(status_pipe[0], &status, 1);
+        close(status_pipe[0]);
+
+        if (bytes_read != 1 || status != '1')
+        {
+            // Child failed - clean up
+            close(control_pipe[1]);
+            kill(pid, SIGKILL);
+            waitpid(pid, nullptr, 0);
+            explicit_bzero(convctx.password.data(), convctx.password.size());
+            logger->Err("Child process failed to create PAM session");
+            return false;
+        }
+
+        // Store the control pipe for later use
+        out_controlFd = control_pipe[1];
+        out_childPid = pid;
+
+        explicit_bzero(convctx.password.data(), convctx.password.size());
+        return true;
     }
 
     bool SessionManagerService::SpawnUserSessionProcesses(bool isLoginSession,
@@ -1096,7 +1305,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return true;
     }
 
-    bool SessionManagerService::StopSession(DBusMessage* msg,
+    void SessionManagerService::StopSessionDbus(DBusMessage* msg,
                                         const uid_t callerUid,
                                         const std::string& sessionId)
     {
@@ -1106,19 +1315,31 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         if (it == _sessions.end())
         {
             SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "No such session");
-            return true;
+            return;
         }
 
         auto& session = it->second;
 
-        // --- Authorization ---
         if (callerUid != session.uid && !PolkitAuthorizeStop(callerUid, sessionId))
         {
             logger->Warn("Unauthorized StopSession attempt by UID " + std::to_string(callerUid)
                          + " for session " + sessionId);
             SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_ACCESS_DENIED, "Not authorized");
-            return true;
+            return;
         }
+
+        if (!StopSession(sessionId, session))
+        {
+            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_FAILED, "Failed to stop session. Check logs for more information.");
+        }
+
+        SendSuccessReplyAndLog(_conn, msg);
+        logger->Info("Stopped session " + sessionId + " successfully");
+    }
+
+    bool SessionManagerService::StopSession(const std::string& sessionId, SessionInfo& session)
+    {
+        const auto logger = _serviceManager->Get<Logger::LoggerService>();
 
         // --- Terminate user processes ---
         if (!TerminateUserSessionProcesses(sessionId))
@@ -1127,31 +1348,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             // Continue cleanup anyway, but client will know something went wrong
         }
 
-        // --- Close PAM session safely ---
-        if (session.pam_handle)
-        {
-            if (const int rc1 = pam_close_session(session.pam_handle, 0); rc1 != PAM_SUCCESS)
-                logger->Warn("pam_close_session failed for session " + sessionId + ": " + std::to_string(rc1));
-
-            if (const int rc2 = pam_end(session.pam_handle, PAM_SUCCESS); rc2 != PAM_SUCCESS)
-                logger->Warn("pam_end failed for session " + sessionId + ": " + std::to_string(rc2));
-
-            session.pam_handle = nullptr;
-        }
+        // --- Signal child to clean up PAM and exit ---
+        TerminatePAMForSession(session);
 
         // --- Remove session from map ---
-        _sessions.erase(it);
+        _sessions.erase(sessionId);
 
         // --- Spawn greeter if needed ---
-        if (!_isGreeterActive)
+        if (!_isGreeterActive && _sessions.empty()) // TODO: Switch to other session or greeter when logged out, if there are no sessions, just create a login session
         {
             if (!CreateLoginSession())
                 logger->Warn("Failed to spawn greeter after stopping session " + sessionId);
         }
-
-        // --- Send success reply ---
-        SendSuccessReplyAndLog(_conn, msg);
-        logger->Info("Stopped session " + sessionId + " successfully");
 
         return true;
     }
@@ -1222,6 +1430,45 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         dbus_message_unref(reply);
         logger->Info("Successfully stopped processes for session " + sessionId + " (scope: " + scope + ")");
         return true;
+    }
+
+    void SessionManagerService::TerminatePAMForSession(SessionInfo& session)
+    {
+        if (session.leaderPid > 0)
+        {
+            if (session.controlFd >= 0)
+            {
+                // Send shutdown signal to child via control pipe
+                constexpr char shutdown = '1';
+                write(session.controlFd, &shutdown, 1);
+            }
+
+            // Wait for child to exit gracefully
+            int status;
+            pid_t result = waitpid(session.leaderPid, &status, WNOHANG);
+            if (result == 0)
+            {
+                // Give child a moment to clean up
+                usleep(500000); // 500ms
+                result = waitpid(session.leaderPid, &status, WNOHANG);
+
+                if (result == 0)
+                {
+                    // Force kill if still running
+                    _serviceManager->Get<Logger::LoggerService>()->Warn("Child process did not exit gracefully, forcing termination");
+                    kill(session.leaderPid, SIGKILL);
+                    waitpid(session.leaderPid, nullptr, 0);
+                }
+            }
+
+            if (session.controlFd >= 0)
+            {
+                close(session.controlFd);
+                session.controlFd = -1;
+            }
+
+            session.leaderPid = 0;
+        }
     }
 
     void SessionManagerService::ListSessions(DBusMessage* msg, uid_t callerUid)
@@ -1309,11 +1556,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         // Only handle our own transient units
         const auto it = std::ranges::find(_pendingUnits, unitName);
-        if (it == _pendingUnits.end())
-        {
-            logger->Debug("Ignoring JobRemoved for unrelated unit: " + unitName);
-            return;
-        }
+        if (it == _pendingUnits.end()) return;
 
         logger->Info("JobRemoved for unit " + unitName + " (result=" + result + ")");
 
