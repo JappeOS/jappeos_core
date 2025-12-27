@@ -51,8 +51,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
         /// `signalName` is in the following format: "<interface>.<member>".
         void SubscribeToSignal(const std::string& signalName);
 
+        /// Registers a sub-interface for this service. The `name` is just the postfix added to the interface name of this
+        /// service.
+        void RegisterSubInterface(const std::string& name);
+
         /// Handles incoming D-Bus messages and signals.
-        virtual bool HandleMethodCall(DBusMessage* message) = 0;
+        virtual bool HandleMethodCall(DBusMessage* message, const std::string& subInterface) = 0;
 
         /// Returns the name of the service.
         virtual std::string GetName() = 0;
@@ -118,6 +122,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             _signalSubscribers[signalName].push_back(serviceName);
         }
 
+        /// Registers a sub-interface for a service. `subInterface` only needs what's appended to
+        /// `Service::GetFullInterfaceName(service)`, not the full interface name.
+        void RegisterServiceSubInterface(Service* service, const std::string& subInterface)
+        {
+            _servicesNamed.emplace(Service::GetFullInterfaceName(service) + "." + subInterface, service);
+        }
+
         /// Returns a map of all services.
         [[nodiscard]] const std::map<std::type_index, Service*>& List() const { return _services; }
 
@@ -133,7 +144,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
     private:
         std::map<std::type_index, Service*> _services;
         std::vector<std::type_index> _order;
-        std::map<std::string, Service*> _servicesNamed;
+        std::map<std::string, Service*> _servicesNamed; // key: D-Bus interface
         std::unordered_map<std::string, std::vector<std::string>> _signalSubscribers; // key: interface.member (e.g. "org.freedesktop.systemd1.Manager.JobRemoved")
 
         DBusConnection* _conn = nullptr;

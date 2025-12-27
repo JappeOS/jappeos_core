@@ -9,7 +9,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         explicit PowerManagerService(ServiceManager* serviceManager, DBusConnection* conn);
         ~PowerManagerService() override;
 
-        bool HandleMethodCall(DBusMessage* msg) override;
+        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override;
         std::string GetName() override { return "PowerManagerService"; }
 
     private:

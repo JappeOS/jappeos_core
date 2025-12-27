@@ -17,8 +17,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
 
     }
 
-    bool PowerManagerService::HandleMethodCall(DBusMessage* msg)
+    bool PowerManagerService::HandleMethodCall(DBusMessage* msg, const std::string& subInterface)
     {
+        if (!subInterface.empty())
+        {
+            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
+            return true;
+        }
+
         const char* sender = dbus_message_get_sender(msg);
         if (!sender)
         {

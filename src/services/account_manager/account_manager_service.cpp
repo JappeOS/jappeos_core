@@ -16,8 +16,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
     }
 
-    bool AccountManagerService::HandleMethodCall(DBusMessage* msg)
+    bool AccountManagerService::HandleMethodCall(DBusMessage* msg, const std::string& subInterface)
     {
+        if (!subInterface.empty())
+        {
+            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
+            return true;
+        }
+
         const char* sender = dbus_message_get_sender(msg);
         if (!sender)
         {

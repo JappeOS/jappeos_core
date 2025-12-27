@@ -16,7 +16,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Watchdog
         explicit WatchdogService(ServiceManager* serviceManager, DBusConnection* conn);
         ~WatchdogService() override;
 
-        bool HandleMethodCall(DBusMessage* msg) override { return false; }
+        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override { return false; }
         std::string GetName() override { return "WatchdogService"; }
 
     private:

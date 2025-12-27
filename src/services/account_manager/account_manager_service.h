@@ -18,7 +18,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         explicit AccountManagerService(ServiceManager* serviceManager, DBusConnection* conn);
         ~AccountManagerService() override;
 
-        bool HandleMethodCall(DBusMessage* msg) override;
+        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override;
         std::string GetName() override { return "AccountManagerService"; }
 
     private:

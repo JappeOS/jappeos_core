@@ -19,7 +19,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Bsod
         explicit BsodService(ServiceManager* serviceManager, DBusConnection* conn);
         //~BsodService() override;
 
-        bool HandleMethodCall(DBusMessage* msg) override { return false; }
+        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override { return false; }
         std::string GetName() override { return "BsodService"; }
 
         /// This method displays an error message and requires the computer to reboot. This should only be called during

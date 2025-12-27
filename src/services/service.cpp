@@ -33,6 +33,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
 
     void Service::SubscribeToSignal(const std::string& signalName) { _serviceManager->SubscribeServiceToSignal(signalName, GetFullInterfaceName(this)); }
 
+    void Service::RegisterSubInterface(const std::string& name) { _serviceManager->RegisterServiceSubInterface(this, name); }
+
     ServiceManager::~ServiceManager()
     {
         for (auto it = _order.rbegin(); it != _order.rend(); ++it)
@@ -51,7 +53,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             }
         }
 
+        _order.clear();
         _servicesNamed.clear();
+        _signalSubscribers.clear();
     }
 
 }

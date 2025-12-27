@@ -287,7 +287,24 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         try
         {
-            if (!svc->HandleMethodCall(msg))
+            const auto full = std::string(interface);
+            const auto svcInterface = Services::Service::GetFullInterfaceName(svc);
+            std::string subInterface;
+
+            if (full.starts_with(svcInterface))
+            {
+                std::size_t pos = svcInterface.size();
+                if (pos < full.size() && full[pos] == '.')
+                    ++pos; // remove the dot too
+
+                subInterface = full.substr(pos);
+            }
+            else
+            {
+                throw std::logic_error("BUG: `full` should always begin with `svcInterface`!");
+            }
+
+            if (!svc->HandleMethodCall(msg, subInterface))
             {
                 NULL_SAFE_CALL(logger, Debug(std::string("Method not handled in service `" + svc->GetName() + "` with interface: ") + interface));
             }

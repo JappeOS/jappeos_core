@@ -27,8 +27,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
         }*/
 
         // TODO: More error/safety checking
-        bool HandleMethodCall(DBusMessage* msg) override
+        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override
         {
+            if (!subInterface.empty())
+            {
+                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
+                return true;
+            }
+
             const char* member = dbus_message_get_member(msg);
             if (strcmp(member, "Log") != 0)
             {

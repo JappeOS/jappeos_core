@@ -1,7 +1,5 @@
 #include "watchdog_service.h"
 
-
-
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Watchdog
 {
 
