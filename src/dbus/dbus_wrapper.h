@@ -14,7 +14,6 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore
 {
-    class ObjectPath;
 
 #define DBUS_DEFAULT_SAFE_TIMEOUT 5000
 
@@ -44,6 +43,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         std::string _msg;
     };
 
+    /**
+     * @brief Simple helper method to append to a DBusMessageIter.
+     */
     static void AppendValue(DBusMessageIter& it, const int type, const void* value)
     {
         if (!dbus_message_iter_append_basic(&it, type, value))
@@ -142,6 +144,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         friend struct ObjectPathHash;
     };
 
+    /**
+     * @brief Creates a hash for ObjectPath
+     */
     struct ObjectPathHash
     {
         size_t operator()(const ObjectPath& p) const noexcept
@@ -718,6 +723,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         friend struct InterfaceNameHash;
     };
 
+    /**
+     * @brief Creates a hash for InterfaceName
+     */
     struct InterfaceNameHash
     {
         size_t operator()(const InterfaceName& p) const noexcept
@@ -726,6 +734,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         }
     };
 
+    /**
+     * @brief Represents a std::function used to handle received signals.
+     */
     using SignalHandler = std::function<void(const Message&)>;
 
     /**
