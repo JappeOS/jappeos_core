@@ -1,7 +1,128 @@
 #include "dbus_wrapper.h"
 
+#include <format>
+
 namespace JappeStudios::JappeOS::JappeOSCore
 {
+
+    // ObjectPath
+
+    ObjectPath::ObjectPath(std::string path)
+    {
+        if (!IsValid(path))
+            throw std::invalid_argument("Invalid D-Bus ObjectPath");
+
+        _path = std::move(path);
+    }
+
+    ObjectPath ObjectPath::Child(const std::string_view element) const
+    {
+        if (!IsValidElement(element))
+            throw std::invalid_argument("Invalid ObjectPath element");
+
+        if (_path == "/")
+            return ObjectPath{"/" + std::string(element)};
+
+        return ObjectPath{_path + "/" + std::string(element)};
+    }
+
+    ObjectPath ObjectPath::Parent() const
+    {
+        if (_path == "/")
+            return *this;
+
+        const auto pos = _path.find_last_of('/');
+        if (pos == 0)
+            return ObjectPath{"/"};
+
+        return ObjectPath{_path.substr(0, pos)};
+    }
+
+    bool ObjectPath::IsValidElement(const std::string_view s) noexcept
+    {
+        if (s.empty()) return false;
+        for (const char c : s)
+        {
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool ObjectPath::IsValid(const std::string& path) noexcept
+    {
+        if (path.empty() || path[0] != '/') return false;
+        if (path.size() > 1 && path.back() == '/') return false;
+        if (path == "/") return true;
+
+        std::size_t start = 1;
+        while (start < path.size())
+        {
+            auto end = path.find('/', start);
+            if (end == std::string::npos) end = path.size();
+            if (!IsValidElement(std::string_view(path).substr(start, end - start)))
+                return false;
+            start = end + 1;
+        }
+        return true;
+    }
+
+    // InterfaceName
+
+    InterfaceName::InterfaceName(std::string name)
+    {
+        if (!IsValid(name))
+            throw std::invalid_argument("Invalid D-Bus InterfaceName");
+
+        _name = std::move(name);
+    }
+
+    InterfaceName InterfaceName::Child(const std::string_view segment) const
+    {
+        if (!IsValidSegment(segment))
+            throw std::invalid_argument("Invalid InterfaceName segment");
+
+        return InterfaceName{_name + "." + std::string(segment)};
+    }
+
+    InterfaceName InterfaceName::Parent() const
+    {
+        const auto pos = _name.find_last_of('.');
+        if (pos == std::string::npos)
+            return *this;
+
+        return InterfaceName{_name.substr(0, pos)};
+    }
+
+    bool InterfaceName::IsValidSegment(const std::string_view s) noexcept
+    {
+        if (s.empty()) return false;
+        if (!(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_'))
+            return false;
+
+        for (const char c : s.substr(1))
+        {
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+                return false;
+        }
+        return true;
+    }
+
+    bool InterfaceName::IsValid(const std::string& name) noexcept
+    {
+        std::size_t start = 0;
+        while (start < name.size())
+        {
+            auto end = name.find('.', start);
+            if (end == std::string::npos) end = name.size();
+            if (!IsValidSegment(std::string_view(name).substr(start, end - start)))
+                return false;
+            start = end + 1;
+        }
+        return !name.empty();
+    }
 
     // Connection
 
@@ -65,18 +186,33 @@ namespace JappeStudios::JappeOS::JappeOSCore
         );
 
         if (!inserted)
-            throw std::logic_error("Object already exists: " + object->GetPath());
+            throw std::logic_error("Object already exists: " + object->GetPath().ToString());
     }
 
-    void Connection::Unregister(const std::string& object)
+    void Connection::Unregister(const ObjectPath& object)
     {
         _objectRegistry.erase(object);
     }
 
+    SignalSubscription Connection::SubscribeSignal(const std::string& busName,
+                                                   const ObjectPath& path,
+                                                   const InterfaceName& iface,
+                                                   const std::string& method,
+                                                   const SignalHandler& handler)
+    {
+        return SignalSubscription(*this, busName, SignalKey{ iface, method, path }, handler);
+    }
+
     bool Connection::HandleMessage(const Message& msg)
     {
-        const auto& obj = msg.GetPath();
-        const auto it = _objectRegistry.find(obj);
+        if (msg.GetType() == DBUS_MESSAGE_TYPE_SIGNAL)
+            return HandleSignal(msg);
+
+        const auto path = msg.GetPath();
+        if (!path.has_value())
+            return false;
+
+        const auto it = _objectRegistry.find(path.value());
         if (it == _objectRegistry.end())
             return false;
 
@@ -92,7 +228,22 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         if (dbus_error_is_set(&err))
         {
-            const auto errmsg = "Failed to add match: " + std::string(err.message);
+            const auto errmsg = "Failed to add match: " + std::string(err.message ? err.message : "unknown");
+            dbus_error_free(&err);
+            throw DBusException(DBUS_ERROR_MATCH_RULE_INVALID, errmsg);
+        }
+    }
+
+    void Connection::RemoveMatch(const std::string& rule) const
+    {
+        DBusError err;
+        dbus_error_init(&err);
+
+        dbus_bus_remove_match(_conn, rule.c_str(), &err);
+
+        if (dbus_error_is_set(&err))
+        {
+            const auto errmsg = "Failed to remove match: " + std::string(err.message ? err.message : "unknown");
             dbus_error_free(&err);
             throw DBusException(DBUS_ERROR_MATCH_RULE_INVALID, errmsg);
         }
@@ -162,6 +313,86 @@ namespace JappeStudios::JappeOS::JappeOSCore
         }
 
         return Message{msg};
+    }
+
+    bool Connection::HandleSignal(const Message& msg)
+    {
+        const auto iface = msg.GetInterface();
+        if (!iface.has_value())
+            return false;
+
+        const SignalKey key{
+            iface.value(),
+            msg.GetMember(),
+            msg.GetPath()
+        };
+
+        const auto it = _signalHandlers.find(key);
+        if (it == _signalHandlers.end())
+            return false;
+
+        for (auto& handler : it->second)
+        {
+            try
+            {
+                handler(msg);
+            }
+            catch (const std::exception&) {} // TODO: Proper exception handling
+        }
+
+        return true;
+    }
+
+    // SignalSubscription
+
+    SignalSubscription::SignalSubscription(Connection& conn,
+                                           const std::string& busName,
+                                           Connection::SignalKey key,
+                                           SignalHandler handler) :
+                                           _conn(conn),
+                                           _key(std::move(key))
+    {
+        _match = std::format(
+            "type='signal',sender='{}',{}interface='{}',member='{}'",
+            busName,
+            _key.path.has_value() ? std::format("path='{}',", _key.path.value().ToString()) : "",
+            _key.interface.ToString(),
+            _key.member
+        );
+
+        auto& list = _conn._signalHandlers[_key];
+        _index = list.size();
+        list.push_back(std::move(handler));
+
+        if (list.size() == 1)
+            AddMatchRule();
+    }
+
+    SignalSubscription::~SignalSubscription()
+    {
+        const auto it = _conn._signalHandlers.find(_key);
+        if (it == _conn._signalHandlers.end())
+            return;
+
+        auto& list = it->second;
+        list[_index] = nullptr; // tombstone
+
+        if (std::all_of(list.begin(), list.end(),
+                        [](auto& f){ return !f; }))
+        {
+            RemoveMatchRule();
+            _conn._signalHandlers.erase(it);
+        }
+    }
+
+    void SignalSubscription::AddMatchRule() const
+    {
+        _conn.AddMatch(_match);
+    }
+
+    void SignalSubscription::RemoveMatchRule() const
+    {
+        _conn.RemoveMatch(_match);
     }
 
     // Message
@@ -251,10 +482,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
         return sender ? sender : "";
     }
 
-    std::string Message::GetInterface() const
+    std::optional<InterfaceName> Message::GetInterface() const
     {
         const auto iface = dbus_message_get_interface(_msg);
-        return iface ? iface : "";
+        return iface ? std::make_optional(InterfaceName(iface)) : std::nullopt;
     }
 
     std::string Message::GetMember() const
@@ -263,15 +494,23 @@ namespace JappeStudios::JappeOS::JappeOSCore
         return member ? member : "";
     }
 
-    std::string Message::GetPath() const
+    std::optional<ObjectPath> Message::GetPath() const
     {
         const auto path = dbus_message_get_path(_msg);
-        return path ? path : "";
+        return path ? std::make_optional(ObjectPath(path)) : std::nullopt;
     }
 
-    Message Message::CreateMethodCall(const std::string& busName, const std::string& path, const std::string& iface, const std::string& method)
+    Message Message::CreateMethodCall(const std::string& busName,
+                                      const ObjectPath& path,
+                                      const InterfaceName& iface,
+                                      const std::string& method)
     {
-        DBusMessage* msg = dbus_message_new_method_call(busName.c_str(), path.c_str(), iface.c_str(), method.c_str());
+        DBusMessage* msg = dbus_message_new_method_call(
+            busName.c_str(),
+            path.ToString().c_str(),
+            iface.ToString().c_str(),
+            method.c_str()
+        );
 
         if (!msg)
             throw DBusException(DBUS_ERROR_NO_MEMORY, "Failed to allocate D-Bus message.");
@@ -289,9 +528,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         return Message{msg};
     }
 
-    Message Message::CreateSignal(const std::string& path, const std::string& iface, const std::string& name)
+    Message Message::CreateSignal(const ObjectPath& path, const InterfaceName& iface, const std::string& name)
     {
-        DBusMessage* msg = dbus_message_new_signal(path.c_str(), iface.c_str(), name.c_str());
+        DBusMessage* msg = dbus_message_new_signal(path.ToString().c_str(), iface.ToString().c_str(), name.c_str());
 
         if (!msg)
             throw DBusException(DBUS_ERROR_NO_MEMORY, "Failed to allocate D-Bus message.");
@@ -311,7 +550,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     // Object
 
-    Object::Object(Connection& connection, std::string path) : _connection(connection), _path(std::move(path))
+    Object::Object(Connection& connection, ObjectPath path) : _connection(connection), _path(std::move(path))
     {
         _connection.Register(this);
     }
@@ -321,7 +560,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         _connection.Unregister(GetPath());
     }
 
-    Interface& Object::CreateInterface(const std::string& name)
+    Interface& Object::CreateInterface(const InterfaceName& name)
     {
         auto [it, inserted] = _interfaces.emplace(
             name,
@@ -329,7 +568,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         );
 
         if (!inserted)
-            throw std::logic_error("Interface already exists: " + name);
+            throw std::logic_error("Interface already exists: " + name.ToString());
 
         return *it->second;
     }
@@ -337,14 +576,16 @@ namespace JappeStudios::JappeOS::JappeOSCore
     bool Object::HandleMessage(const Message& msg)
     {
         const auto& iface = msg.GetInterface();
+        if (!iface.has_value())
+            return false;
 
-        if (iface == "org.freedesktop.DBus.Properties")
+        if (iface.value().ToString() == "org.freedesktop.DBus.Properties")
             return DispatchProperties(msg);
 
         /*if (iface == "org.freedesktop.DBus.Introspectable")
             return DispatchIntrospection(msg);*/
 
-        const auto it = _interfaces.find(iface);
+        const auto it = _interfaces.find(iface.value());
         if (it == _interfaces.end())
             return false;
 
@@ -354,17 +595,17 @@ namespace JappeStudios::JappeOS::JappeOSCore
         });
     }
 
-    std::string Object::GetPath() const { return _path; }
+    ObjectPath Object::GetPath() const { return _path; }
 
     bool Object::DispatchProperties(const Message& msg)
     {
-        std::string targetInterface;
+        InterfaceName targetInterface{""};
         std::string property;
 
         if (msg.GetMember() == "Get")
         {
             const auto args = msg.GetArgs<std::string, std::string>();
-            targetInterface = std::get<0>(args);
+            targetInterface = InterfaceName(std::get<0>(args));
             property        = std::get<1>(args);
 
             const auto iface = _interfaces.find(targetInterface);
@@ -381,7 +622,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         if (msg.GetMember() == "Set")
         {
             const auto args = msg.GetArgs<std::string, std::string, std::any>();
-            targetInterface = std::get<0>(args);
+            targetInterface = InterfaceName(std::get<0>(args));
             property        = std::get<1>(args);
 
             const auto iface = _interfaces.find(targetInterface);
@@ -398,7 +639,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         if (msg.GetMember() == "GetAll")
         {
             const auto args = msg.GetArgs<std::string>();
-            targetInterface = std::get<0>(args);
+            targetInterface = InterfaceName(std::get<0>(args));
 
             const auto iface = _interfaces.find(targetInterface);
             if (iface == _interfaces.end())
@@ -416,7 +657,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     // Interface
 
-    Interface::Interface(Object&, std::string name) : _name(std::move(name)) {}
+    Interface::Interface(const Object& obj, InterfaceName name) : _name(std::move(name)), _object(obj) {}
 
     bool Interface::Dispatch(const Connection& conn, const Message& msg)
     {
@@ -437,7 +678,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     void Interface::HandleGetProperty(const Connection& conn,
                                       const Message& msg,
-                                      const std::string& iface,
+                                      const InterfaceName& iface,
                                       const std::string& name)
     {
         if (iface != _name)
@@ -454,7 +695,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     void Interface::HandleSetProperty(const Connection& conn,
                                       const Message& msg,
-                                      const std::string& iface,
+                                      const InterfaceName& iface,
                                       const std::string& name)
     {
         if (iface != _name)
@@ -468,7 +709,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         Message::CreateMethodReturn(msg).Send(conn);
     }
 
-    void Interface::HandleGetAllProperties(const Connection& conn, const Message& msg, const std::string& iface)
+    void Interface::HandleGetAllProperties(const Connection& conn, const Message& msg, const InterfaceName& iface)
     {
         if (iface != _name)
             throw DBusException(DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
@@ -486,5 +727,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         reply.SetArgs(values);
         reply.Send(conn);
     }
+
+    InterfaceName Interface::GetName() const { return _name; }
+
+    const Object& Interface::GetObject() const { return _object; }
 
 }

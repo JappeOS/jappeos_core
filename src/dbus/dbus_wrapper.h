@@ -8,13 +8,16 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <dbus/dbus.h>
 
-#include "../utils/dbus_utils.h"
-
 namespace JappeStudios::JappeOS::JappeOSCore
 {
+    class ObjectPath;
+
+#define DBUS_DEFAULT_SAFE_TIMEOUT 5000
+
     class Object;
     class Interface;
     template<typename>
@@ -28,7 +31,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
     class DBusException : public std::runtime_error
     {
     public:
-        explicit DBusException(const char* code, const std::string& msg = "") : std::runtime_error("DBusException(code='" + std::string(code) + "', msg='" + msg + "')"), _code{code}, _msg {msg} {}
+        explicit DBusException(const char* code, const std::string& msg = "")
+            : std::runtime_error("DBusException(code='" + std::string(code) + "', msg='" + msg + "')"),
+            _code{code}, _msg {msg}
+        {}
 
         [[nodiscard]] std::string GetCode() const { return _code; }
         [[nodiscard]] std::string GetMsg() const { return _msg; }
@@ -46,6 +52,104 @@ namespace JappeStudios::JappeOS::JappeOSCore
         }
     }
 
+    /**
+     * @brief Represents a D-Bus object path.
+     *
+     * An ObjectPath is a strongly-typed wrapper around a valid D-Bus object path
+     * string (e.g. "/org/example/Network/Devices/dev0").
+     *
+     * Invariants:
+     * - Always begins with '/'
+     * - Contains no empty elements
+     * - Contains only valid D-Bus identifier characters
+     * - Never ends with '/' (except for the root path "/")
+     *
+     * ObjectPath is a lightweight value type and is cheap to copy and move.
+     * All validation is performed during construction.
+     */
+    class ObjectPath
+    {
+    public:
+        /**
+         * @brief Constructs the root object path ("/").
+         */
+        ObjectPath() : _path("/") {}
+
+        /**
+         * @brief Constructs an ObjectPath from a string.
+         *
+         * @param path A string containing a D-Bus object path.
+         *
+         * @throws std::invalid_argument if the path is not a valid D-Bus object path.
+         */
+        explicit ObjectPath(std::string path);
+
+        /**
+         * @brief Implicit conversion to string view.
+         *
+         * Allows ObjectPath to be passed directly to APIs expecting a string-like
+         * type (e.g. D-Bus marshaling).
+         */
+        operator std::string_view() const noexcept { return _path; }
+
+        /**
+         * @brief Equality operator for support with containers like std::unordered_map.
+         */
+        bool operator==(const ObjectPath&) const = default;
+
+        /**
+         * @brief Returns the underlying object path string.
+         */
+        [[nodiscard]] const std::string& ToString() const noexcept { return _path; }
+
+        /**
+         * @brief Returns a new ObjectPath with a child element appended.
+         *
+         * Example:
+         * @code
+         * ObjectPath base{"/org/example/Devices"};
+         * auto dev = base.Child("dev0");
+         * // "/org/example/Devices/dev0"
+         * @endcode
+         *
+         * @param element A single path element (not containing '/').
+         *
+         * @throws std::invalid_argument if the element is not valid.
+         */
+        [[nodiscard]] ObjectPath Child(std::string_view element) const;
+
+        /**
+         * @brief Returns the parent object path.
+         *
+         * Example:
+         * @code
+         * ObjectPath p{"/org/example/Devices/dev0"};
+         * auto parent = p.Parent();
+         * // "/org/example/Devices"
+         * @endcode
+         *
+         * If this ObjectPath represents the root path ("/"), the root path
+         * is returned.
+         */
+        [[nodiscard]] ObjectPath Parent() const;
+
+    private:
+        std::string _path;
+
+    private:
+        static bool IsValidElement(std::string_view s) noexcept;
+        static bool IsValid(const std::string& path) noexcept;
+        friend struct ObjectPathHash;
+    };
+
+    struct ObjectPathHash
+    {
+        size_t operator()(const ObjectPath& p) const noexcept
+        {
+            return std::hash<std::string>{}(p._path);
+        }
+    };
+
     // ========== SIGNATURE TRAITS (UNIFIED INTERFACE) ==========
 #pragma region SignatureTraits
 
@@ -57,32 +161,44 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
-    struct DBusSignatureTraits<int32_t> {
+    struct DBusSignatureTraits<int32_t>
+    {
         static const char* get() { return "i"; }
     };
 
     template<>
-    struct DBusSignatureTraits<uint32_t> {
+    struct DBusSignatureTraits<uint32_t>
+    {
         static const char* get() { return "u"; }
     };
 
     template<>
-    struct DBusSignatureTraits<bool> {
+    struct DBusSignatureTraits<bool>
+    {
         static const char* get() { return "b"; }
     };
 
     template<>
-    struct DBusSignatureTraits<double> {
+    struct DBusSignatureTraits<double>
+    {
         static const char* get() { return "d"; }
     };
 
     template<>
-    struct DBusSignatureTraits<std::string> {
+    struct DBusSignatureTraits<std::string>
+    {
         static const char* get() { return "s"; }
     };
 
     template<>
-    struct DBusSignatureTraits<std::any> {
+    struct DBusSignatureTraits<ObjectPath>
+    {
+        static const char* get() { return "o"; }
+    };
+
+    template<>
+    struct DBusSignatureTraits<std::any>
+    {
         static const char* get() { return "v"; }
     };
 
@@ -117,7 +233,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         static const char* get()
         {
-            static const std::string sig = [] {
+            static const std::string sig = []
+            {
                 std::string s = "(";
                 ((s += DBusSignatureTraits<Ts>::get()), ...);
                 s += ")";
@@ -142,49 +259,71 @@ namespace JappeStudios::JappeOS::JappeOSCore
     struct DBusSetTraits;
 
     template<>
-    struct DBusSetTraits<bool> {
+    struct DBusSetTraits<bool>
+    {
         static constexpr int type = DBUS_TYPE_BOOLEAN;
-        static void append(DBusMessageIter& it, const bool v) {
+        static void append(DBusMessageIter& it, const bool v)
+        {
             const dbus_bool_t b = v ? TRUE : FALSE;
             AppendValue(it, type, &b);
         }
     };
 
     template<>
-    struct DBusSetTraits<int32_t> {
+    struct DBusSetTraits<int32_t>
+    {
         static constexpr int type = DBUS_TYPE_INT32;
-        static void append(DBusMessageIter& it, const int32_t& v) {
+        static void append(DBusMessageIter& it, const int32_t& v)
+        {
             AppendValue(it, type, &v);
         }
     };
 
     template<>
-    struct DBusSetTraits<uint32_t> {
+    struct DBusSetTraits<uint32_t>
+    {
         static constexpr int type = DBUS_TYPE_UINT32;
-        static void append(DBusMessageIter& it, const uint32_t& v) {
+        static void append(DBusMessageIter& it, const uint32_t& v)
+        {
             AppendValue(it, type, &v);
         }
     };
 
     template<>
-    struct DBusSetTraits<double> {
+    struct DBusSetTraits<double>
+    {
         static constexpr int type = DBUS_TYPE_DOUBLE;
-        static void append(DBusMessageIter& it, const double& v) {
+        static void append(DBusMessageIter& it, const double& v)
+        {
             AppendValue(it, type, &v);
         }
     };
 
     template<>
-    struct DBusSetTraits<std::string> {
+    struct DBusSetTraits<std::string>
+    {
         static constexpr int type = DBUS_TYPE_STRING;
-        static void append(DBusMessageIter& it, const std::string& v) {
+        static void append(DBusMessageIter& it, const std::string& v)
+        {
             const char* s = v.c_str();
             AppendValue(it, type, &s);
         }
     };
 
+    template<>
+    struct DBusSetTraits<ObjectPath>
+    {
+        static constexpr int type = DBUS_TYPE_OBJECT_PATH;
+        static void append(DBusMessageIter& it, const ObjectPath& v)
+        {
+            const char* s = v.ToString().c_str();
+            AppendValue(it, type, &s);
+        }
+    };
+
     template<typename T>
-    struct DBusSetTraits<std::vector<T>> {
+    struct DBusSetTraits<std::vector<T>>
+    {
         static constexpr int type = DBUS_TYPE_ARRAY;
 
         static void append(DBusMessageIter& it, const std::vector<T>& vec)
@@ -202,20 +341,22 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<typename K, typename V>
-    struct DBusSetTraits<std::map<K, V>> {
+    struct DBusSetTraits<std::map<K, V>>
+    {
         static constexpr int type = DBUS_TYPE_ARRAY;
 
         static void append(DBusMessageIter& it, const std::map<K, V>& map)
         {
             DBusMessageIter array;
-            std::string sig = std::string("{")
+            const std::string sig = std::string("{")
                             + DBusGetSignature<K>()
                             + DBusGetSignature<V>()
                             + "}";
 
             dbus_message_iter_open_container(&it, type, sig.c_str(), &array);
 
-            for (const auto& [k, v] : map) {
+            for (const auto& [k, v] : map)
+            {
                 DBusMessageIter entry;
                 dbus_message_iter_open_container(
                     &array, DBUS_TYPE_DICT_ENTRY, nullptr, &entry);
@@ -231,24 +372,28 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
-    struct DBusSetTraits<std::any> {
+    struct DBusSetTraits<std::any>
+    {
         static constexpr int type = DBUS_TYPE_VARIANT;
 
         static void append(DBusMessageIter& it, const std::any& a)
         {
             DBusMessageIter sub;
 
-            if (a.type() == typeid(int32_t)) {
+            if (a.type() == typeid(int32_t))
+            {
                 dbus_message_iter_open_container(
                     &it, type, "i", &sub);
                 DBusSetTraits<int32_t>::append(sub, std::any_cast<int32_t>(a));
             }
-            else if (a.type() == typeid(std::string)) {
+            else if (a.type() == typeid(std::string))
+            {
                 dbus_message_iter_open_container(
                     &it, type, "s", &sub);
                 DBusSetTraits<std::string>::append(sub, std::any_cast<std::string>(a));
             }
-            else {
+            else
+            {
                 throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unsupported variant");
             }
 
@@ -257,7 +402,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<typename... Ts>
-    struct DBusSetTraits<std::tuple<Ts...>> {
+    struct DBusSetTraits<std::tuple<Ts...>>
+    {
         static constexpr int type = DBUS_TYPE_STRUCT;
 
         static void append(DBusMessageIter& it, const std::tuple<Ts...>& t)
@@ -265,7 +411,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
             DBusMessageIter sub;
             dbus_message_iter_open_container(&it, type, nullptr, &sub);
 
-            std::apply([&](const Ts&... elems) {
+            std::apply([&](const Ts&... elems)
+            {
                 (DBusSetTraits<Ts>::append(sub, elems), ...);
             }, t);
 
@@ -282,9 +429,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
     struct DBusGetTraits;
 
     template<>
-    struct DBusGetTraits<bool> {
+    struct DBusGetTraits<bool>
+    {
         static constexpr int type = DBUS_TYPE_BOOLEAN;
-        static bool get(DBusMessageIter& it) {
+        static bool get(DBusMessageIter& it)
+        {
             dbus_bool_t b;
             dbus_message_iter_get_basic(&it, &b);
             dbus_message_iter_next(&it);
@@ -293,9 +442,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
-    struct DBusGetTraits<int32_t> {
+    struct DBusGetTraits<int32_t>
+    {
         static constexpr int type = DBUS_TYPE_INT32;
-        static int32_t get(DBusMessageIter& it) {
+        static int32_t get(DBusMessageIter& it)
+        {
             int32_t v;
             dbus_message_iter_get_basic(&it, &v);
             dbus_message_iter_next(&it);
@@ -304,9 +455,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
-    struct DBusGetTraits<uint32_t> {
+    struct DBusGetTraits<uint32_t>
+    {
         static constexpr int type = DBUS_TYPE_UINT32;
-        static uint32_t get(DBusMessageIter& it) {
+        static uint32_t get(DBusMessageIter& it)
+        {
             uint32_t v;
             dbus_message_iter_get_basic(&it, &v);
             dbus_message_iter_next(&it);
@@ -315,9 +468,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
-    struct DBusGetTraits<double> {
+    struct DBusGetTraits<double>
+    {
         static constexpr int type = DBUS_TYPE_DOUBLE;
-        static double get(DBusMessageIter& it) {
+        static double get(DBusMessageIter& it)
+        {
             double v;
             dbus_message_iter_get_basic(&it, &v);
             dbus_message_iter_next(&it);
@@ -326,9 +481,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
-    struct DBusGetTraits<std::string> {
+    struct DBusGetTraits<std::string>
+    {
         static constexpr int type = DBUS_TYPE_STRING;
-        static std::string get(DBusMessageIter& it) {
+        static std::string get(DBusMessageIter& it)
+        {
             const char* s;
             dbus_message_iter_get_basic(&it, &s);
             dbus_message_iter_next(&it);
@@ -336,8 +493,22 @@ namespace JappeStudios::JappeOS::JappeOSCore
         }
     };
 
+    template<>
+    struct DBusGetTraits<ObjectPath>
+    {
+        static constexpr int type = DBUS_TYPE_OBJECT_PATH;
+        static ObjectPath get(DBusMessageIter& it)
+        {
+            const char* o;
+            dbus_message_iter_get_basic(&it, &o);
+            dbus_message_iter_next(&it);
+            return o ? ObjectPath(o) : ObjectPath(); // TODO: Maybe throw instead of using default ObjectPath ctor
+        }
+    };
+
     template<typename T>
-    struct DBusGetTraits<std::vector<T>> {
+    struct DBusGetTraits<std::vector<T>>
+    {
         static constexpr int type = DBUS_TYPE_ARRAY;
 
         static std::vector<T> get(DBusMessageIter& it)
@@ -346,7 +517,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
             std::vector<T> out;
 
             dbus_message_iter_recurse(&it, &sub);
-            while (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID) {
+            while (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID)
+            {
                 out.push_back(DBusGetTraits<T>::get(sub));
             }
 
@@ -363,7 +535,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
         static std::map<K, V> get(DBusMessageIter& it)
         {
             // Validate container type
-            if (dbus_message_iter_get_arg_type(&it) != DBUS_TYPE_ARRAY) {
+            if (dbus_message_iter_get_arg_type(&it) != DBUS_TYPE_ARRAY)
+            {
                 throw DBusException(
                     DBUS_ERROR_INVALID_ARGS,
                     "Expected D-Bus array for dict");
@@ -374,10 +547,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
             std::map<K, V> result;
 
-            while (dbus_message_iter_get_arg_type(&array) != DBUS_TYPE_INVALID) {
+            while (dbus_message_iter_get_arg_type(&array) != DBUS_TYPE_INVALID)
+            {
 
                 // Each element must be a dict entry
-                if (dbus_message_iter_get_arg_type(&array) != DBUS_TYPE_DICT_ENTRY) {
+                if (dbus_message_iter_get_arg_type(&array) != DBUS_TYPE_DICT_ENTRY)
+                {
                     throw DBusException(
                         DBUS_ERROR_INVALID_ARGS,
                         "Expected dict entry");
@@ -406,7 +581,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
-    struct DBusGetTraits<std::any> {
+    struct DBusGetTraits<std::any>
+    {
         static constexpr int type = DBUS_TYPE_VARIANT;
 
         static std::any get(DBusMessageIter& it)
@@ -430,7 +606,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<typename... Ts>
-    struct DBusGetTraits<std::tuple<Ts...>> {
+    struct DBusGetTraits<std::tuple<Ts...>>
+    {
         static constexpr int type = DBUS_TYPE_STRUCT;
 
         static std::tuple<Ts...> get(DBusMessageIter& it)
@@ -458,6 +635,100 @@ namespace JappeStudios::JappeOS::JappeOSCore
     class Message;
 
     /**
+     * @brief Represents a D-Bus interface name.
+     *
+     * An InterfaceName is a strongly-typed wrapper around a valid D-Bus interface
+     * name (e.g. "org.example.Network.Device").
+     *
+     * Invariants:
+     * - Dot-separated identifier segments
+     * - Each segment starts with a letter or underscore
+     * - Contains only alphanumeric characters and underscores
+     *
+     * InterfaceName is a lightweight value type and performs validation on
+     * construction.
+     */
+    class InterfaceName
+    {
+    public:
+        /**
+         * @brief Constructs an InterfaceName from a string.
+         *
+         * @param name A string containing a D-Bus interface name.
+         *
+         * @throws std::invalid_argument if the name is not a valid interface name.
+         */
+        explicit InterfaceName(std::string name);
+
+        /**
+         * @brief Implicit conversion to string view.
+         *
+         * Allows InterfaceName to be passed directly to APIs expecting a
+         * string-like type.
+         */
+        operator std::string_view() const noexcept { return _name; }
+
+        /**
+         * @brief Equality operator for support with containers like std::unordered_map.
+         */
+        bool operator==(const InterfaceName&) const = default;
+
+        /**
+         * @brief Returns the underlying interface name string.
+         */
+        [[nodiscard]] const std::string& ToString() const noexcept { return _name; }
+
+        /**
+         * @brief Returns a new InterfaceName with a child segment appended.
+         *
+         * Example:
+         * @code
+         * InterfaceName base{"org.example.Network"};
+         * auto iface = base.Child("Device");
+         * // "org.example.Network.Device"
+         * @endcode
+         *
+         * @param segment A single interface name segment.
+         *
+         * @throws std::invalid_argument if the segment is not valid.
+         */
+        [[nodiscard]] InterfaceName Child(std::string_view segment) const;
+
+        /**
+         * @brief Returns the parent interface name.
+         *
+         * Example:
+         * @code
+         * InterfaceName iface{"org.example.Network.Device"};
+         * auto parent = iface.Parent();
+         * // "org.example.Network"
+         * @endcode
+         *
+         * If the interface has no parent segment, the current instance
+         * is returned.
+         */
+        [[nodiscard]] InterfaceName Parent() const;
+
+    private:
+        std::string _name;
+
+    private:
+        static bool IsValidSegment(std::string_view s) noexcept;
+        static bool IsValid(const std::string& name) noexcept;
+        friend struct InterfaceNameHash;
+    };
+
+    struct InterfaceNameHash
+    {
+        size_t operator()(const InterfaceName& p) const noexcept
+        {
+            return std::hash<std::string>{}(p._name);
+        }
+    };
+
+    using SignalHandler = std::function<void(const Message&)>;
+
+    /**
      * @brief Represents a D-Bus connection.
      *
      * Manages the lifecycle of a D-Bus connection and maintains a registry of
@@ -465,6 +736,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
      */
     class Connection
     {
+        friend class SignalSubscription;
+
     public:
         /**
          * @brief Creates a connection to a D-Bus bus.
@@ -512,7 +785,22 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @brief Unregisters an object by path.
          * @param object The object path to unregister
          */
-        void Unregister(const std::string& object);
+        void Unregister(const ObjectPath& object);
+
+        /**
+         * @brief Subscribes to a signal.
+         * @param busName Source bus name
+         * @param path Object path
+         * @param iface Interface name
+         * @param method Method name
+         * @param handler Method called when a signal is received
+         * @return New method call message
+         */
+        class SignalSubscription SubscribeSignal(const std::string& busName,
+                                                 const ObjectPath& path,
+                                                 const InterfaceName& iface,
+                                                 const std::string& method,
+                                                 const SignalHandler& handler);
 
         /**
          * @brief Routes a message to the appropriate registered object.
@@ -533,6 +821,16 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @throws DBusException if adding the match fails
          */
         void AddMatch(const std::string& rule) const;
+
+        /**
+         * @brief Removes a message match rule from the bus.
+         *
+         * Match rules filter which messages this connection receives from the bus.
+         *
+         * @param rule D-Bus match rule string (e.g., "type='signal',interface='com.example.Foo'")
+         * @throws DBusException if removing the match fails
+         */
+        void RemoveMatch(const std::string& rule) const;
 
         /**
          * @brief Requests ownership of a well-known bus name.
@@ -582,8 +880,82 @@ namespace JappeStudios::JappeOS::JappeOSCore
         [[nodiscard]] std::optional<Message> PopMessage() const;
 
     private:
+        using HandlerList = std::vector<SignalHandler>;
+
+        struct SignalKey
+        {
+            InterfaceName interface;
+            std::string member;
+            std::optional<ObjectPath> path;   // optional, can be empty
+
+            bool operator==(const SignalKey& other) const noexcept
+            {
+                return interface == other.interface &&
+                       member    == other.member &&
+                       path      == other.path;
+            }
+        };
+
+        struct SignalKeyHash
+        {
+            std::size_t operator()(const SignalKey& k) const noexcept
+            {
+                std::size_t h = std::hash<std::string>{}(k.interface.ToString());
+                h ^= std::hash<std::string>{}(k.member) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                h ^= std::hash<std::string>{}(k.path.has_value() ? k.path.value().ToString() : "")
+                    + 0x9e3779b9 + (h << 6) + (h >> 2);
+                return h;
+            }
+        };
+
+    private:
         DBusConnection* _conn;
-        std::unordered_map<std::string, Object*> _objectRegistry;
+        std::unordered_map<ObjectPath, Object*, ObjectPathHash> _objectRegistry;
+        std::unordered_map<
+            SignalKey,
+            HandlerList,
+            SignalKeyHash
+        > _signalHandlers;
+
+        bool HandleSignal(const Message& msg);
+    };
+
+    /**
+     * @brief Represents a D-Bus signal subscription.
+     *
+     * Holds a reference to the signal in the Connection. Once this object is destroyed, the signal handler is removed.
+     */
+    class SignalSubscription
+    {
+    public:
+        /**
+         * @brief Creates a signal subscription object for a connection.
+         *
+         * @param conn Reference to the target connection in which to subscribe the signal in
+         * @param busName The bus name or sender of the signal
+         * @param key Contains signal object, interface and method info
+         * @param handler The target method to call when the signal occurs
+         */
+        SignalSubscription(Connection& conn,
+                           const std::string& busName,
+                           Connection::SignalKey key,
+                           SignalHandler handler);
+
+        ~SignalSubscription();
+
+        SignalSubscription(SignalSubscription&& other) noexcept = delete;
+        SignalSubscription& operator=(SignalSubscription&& other) noexcept = delete;
+        SignalSubscription(const SignalSubscription&) = delete;
+        SignalSubscription& operator=(const SignalSubscription&) = delete;
+
+    private:
+        Connection& _conn;
+        Connection::SignalKey _key;
+        size_t _index;
+        std::string _match;
+
+        void AddMatchRule() const;
+        void RemoveMatchRule() const;
     };
 
     /**
@@ -623,7 +995,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @brief Sets the message arguments.
          *
          * Appends the provided arguments to the message. Supported types include:
-         * bool, int32_t, uint32_t, double, std::string, std::vector<T>,
+         * bool, int32_t, uint32_t, double, std::string, ObjectPath, std::vector<T>,
          * std::map<K,V>, std::tuple<Ts...>, and std::any (variant).
          *
          * @param args Arguments to set
@@ -703,9 +1075,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         /**
          * @brief Gets the interface name from the message.
-         * @return Interface name or empty string if not set
+         * @return Interface name or nullopt if not set
          */
-        [[nodiscard]] std::string GetInterface() const;
+        [[nodiscard]] std::optional<InterfaceName> GetInterface() const;
 
         /**
          * @brief Gets the method or signal name from the message.
@@ -715,9 +1087,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         /**
          * @brief Gets the object path from the message.
-         * @return Object path or empty string if not set
+         * @return Object path or nullopt if not set
          */
-        [[nodiscard]] std::string GetPath() const;
+        [[nodiscard]] std::optional<ObjectPath> GetPath() const;
 
     public:
         /**
@@ -729,7 +1101,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @return New method call message
          * @throws DBusException if allocation fails
          */
-        static Message CreateMethodCall(const std::string& busName, const std::string& path, const std::string& iface, const std::string& method);
+        static Message CreateMethodCall(const std::string& busName,
+                                        const ObjectPath& path,
+                                        const InterfaceName& iface,
+                                        const std::string& method);
 
         /**
          * @brief Creates a method return message in response to a method call.
@@ -747,7 +1122,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @return New signal message
          * @throws DBusException if allocation fails
          */
-        static Message CreateSignal(const std::string& path, const std::string& iface, const std::string& name);
+        static Message CreateSignal(const ObjectPath& path, const InterfaceName& iface, const std::string& name);
 
         /**
          * @brief Creates an error reply message.
@@ -757,7 +1132,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @return New error message
          * @throws DBusException if allocation fails
          */
-        static Message CreateError(const Message& replyTo, const std::string& errorName, const std::string& errorMessage);
+        static Message CreateError(const Message& replyTo,
+                                   const std::string& errorName,
+                                   const std::string& errorMessage);
 
     private:
         DBusMessage* _msg;
@@ -813,7 +1190,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @param path Object path (e.g., "/com/example/MyObject")
          * @throws std::logic_error if an object with this path already exists
          */
-        explicit Object(Connection& connection, std::string path);
+        explicit Object(Connection& connection, ObjectPath path);
 
         /**
          * @brief Destroys the object and unregisters it from the connection.
@@ -831,7 +1208,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @return Reference to the created interface
          * @throws std::logic_error if an interface with this name already exists
          */
-        Interface& CreateInterface(const std::string& name);
+        Interface& CreateInterface(const InterfaceName& name);
 
         /**
          * @brief Routes an incoming message to the appropriate interface.
@@ -850,12 +1227,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @brief Gets the object's path.
          * @return The object path
          */
-        [[nodiscard]] std::string GetPath() const;
+        [[nodiscard]] ObjectPath GetPath() const;
 
     private:
-        std::unordered_map<std::string, std::unique_ptr<Interface>> _interfaces;
+        std::unordered_map<InterfaceName, std::unique_ptr<Interface>, InterfaceNameHash> _interfaces;
         Connection& _connection;
-        const std::string _path;
+        const ObjectPath _path;
 
         bool DispatchProperties(const Message& msg);
 
@@ -875,7 +1252,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
             catch (std::exception& e)
             {
                 const auto what = e.what();
-                const auto reply = Message::CreateError(msg, DBUS_ERROR_FAILED, what ? what : "Unknown error");
+                const auto reply = Message::CreateError(
+                    msg,
+                    DBUS_ERROR_FAILED,
+                    what ? what : "Unknown error"
+                );
                 reply.Send(conn);
             }
 
@@ -946,7 +1327,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @param obj Parent object (unused but required for future extensions)
          * @param name Interface name (e.g., "com.example.MyInterface")
          */
-        Interface(Object&, std::string name);
+        Interface(const Object& obj, InterfaceName name);
 
         Interface(Interface&& other) noexcept = delete;
         Interface& operator=(Interface&& other) noexcept = delete;
@@ -1021,8 +1402,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * using the standard Get, Set, and GetAll methods. At least one of getter or
          * setter should be provided.
          *
-         * Supported types: bool, int32_t, uint32_t, double, std::string,
+         * Supported types: bool, int32_t, uint32_t, double, std::string, ObjectPath
          * std::vector<T>, std::map<K,V>, std::tuple<Ts...>, std::any
+         *
+         * @important Registered properties don't automatically emit org.freedesktop.DBus.Properties::PropertiesChanged
+         *            upon value change. The signal should be emitted even if the change is not a result of a D-Bus call.
+         *            See Prop<T> for automating the org.freedesktop.DBus.Properties::PropertiesChanged signal.
          *
          * Example - Read-write property:
          * @code
@@ -1065,35 +1450,55 @@ namespace JappeStudios::JappeOS::JappeOSCore
          *
          * @tparam T Property type (must be a supported D-Bus type)
          * @param name Property name
-         * @param getter Function that returns the current value (can be empty for write-only)
-         * @param setter Function that sets a new value (can be empty for read-only)
+         * @param getter Function that returns the current value
+         * @param setter Function that sets a new value (can be nullptr for read-only)
          * @throws std::logic_error if a property with this name already exists
          */
-        template<typename T>
-        void RegisterProperty(std::string name,
-                              std::function<T()> getter,
-                              std::function<void(const T&)> setter)
+        template<typename T, typename Getter, typename Setter = std::nullptr_t>
+        void RegisterProperty(std::string name, Getter getter, Setter setter = nullptr)
         {
+            static_assert(std::is_invocable_r_v<T, Getter>, "Getter must be callable and return T");
+
+            if constexpr (!std::is_same_v<Setter, std::nullptr_t>)
+            {
+                static_assert(std::is_invocable_r_v<void, Setter, const T&>, "Setter must be callable with (const T&)");
+            }
+
+            std::function<T()> getterFn = std::move(getter);
+            std::function<void(const T&)> setterFn;
+
+            if constexpr (!std::is_same_v<Setter, std::nullptr_t>)
+            {
+                setterFn = std::move(setter);
+            }
+
             Property prop;
             prop.name = name;
             prop.signature = DBusSignatureTraits<T>::get();
 
-            if (getter)
+            if (getterFn)
             {
-                prop.getter = [getter](Message& reply)
+                prop.getter = [getterFn = std::move(getterFn)](Message& reply)
                 {
-                    T value = getter();
+                    T value = getterFn();
                     reply.SetArgs(value);
                 };
             }
 
-            if (setter)
+            if (setterFn)
             {
-                prop.setter = [setter](const Message& msg)
+                prop.setter = [setterFn = std::move(setterFn)](const Message& msg)
                 {
-                    T value;
-                    value = std::get<2>(msg.GetArgs<std::string, std::string, std::any>());
-                    setter(value);
+                    const auto args = msg.GetArgs<std::string, std::string, std::any>();
+                    const std::any& raw = std::get<2>(args);
+                    try
+                    {
+                        setterFn(std::any_cast<const T&>(raw));
+                    }
+                    catch (const std::bad_any_cast&)
+                    {
+                        throw std::runtime_error("Invalid DBus type for property");
+                    }
                 };
             }
 
@@ -1101,9 +1506,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
             if (!inserted)
                 throw std::logic_error("Property already exists: " + name);
         }
-
-        //template<typename F>
-        //void RegisterMethodCallPolicy(F&& handler);
 
         /**
          * @brief Dispatches a method call to the registered handler.
@@ -1134,7 +1536,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          */
         void HandleGetProperty(const Connection& conn,
                                const Message& msg,
-                               const std::string& iface,
+                               const InterfaceName& iface,
                                const std::string& name);
 
         /**
@@ -1152,7 +1554,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          */
         void HandleSetProperty(const Connection& conn,
                                const Message& msg,
-                               const std::string& iface,
+                               const InterfaceName& iface,
                                const std::string& name);
 
         /**
@@ -1168,14 +1570,149 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @return D-Bus message containing a{sv} (dictionary of string to variant) with all readable properties
          * @throws DBusException with code DBUS_ERROR_UNKNOWN_INTERFACE if interface doesn't match
          */
-        void HandleGetAllProperties(const Connection& conn, const Message& msg, const std::string& iface);
+        void HandleGetAllProperties(const Connection& conn, const Message& msg, const InterfaceName& iface);
 
-        //template<typename F>
-        //void SubscribeSignal(const std::string& signalName, F&& handler); TODO: maybe move to Connection
+        /**
+         * @brief Gets the interface's name.
+         * @return The interface name
+         */
+        [[nodiscard]] InterfaceName GetName() const;
+
+        /**
+         * @brief Gets the interface's name.
+         * @return The interface name
+         */
+        [[nodiscard]] const Object& GetObject() const;
 
     private:
-        std::string _name;                                                             ///< Interface name
+        InterfaceName _name;                                                           ///< Interface name
+        const Object& _object;
         std::unordered_map<std::string, std::function<void(const Message&)>> _methods; ///< Map of method names to handler functions
         std::unordered_map<std::string, Property> _properties;                         ///< Map of property names to Property structures
     };
+
+    /**
+     * @brief D-Bus property wrapper with automatic change notification.
+     *
+     * Prop<T> represents a single D-Bus property belonging to an interface.
+     * It stores the property value, exposes it through the
+     * org.freedesktop.DBus.Properties interface, and automatically emits
+     * the PropertiesChanged signal whenever the value changes.
+     *
+     * The property may be modified either through D-Bus (via Set) or
+     * internally through assignment or Set(). In all cases, change
+     * notification is emitted exactly once per actual value change.
+     *
+     * This class is not thread-safe. All access must be serialized by
+     * the owning object.
+     *
+     * @tparam T C++ type of the property value. The type must be
+     *           comparable with operator== and supported by the
+     *           D-Bus marshalling layer.
+     */
+    template<typename T>
+    class Prop
+    {
+    public:
+        /**
+         * @brief Construct and register a D-Bus property.
+         *
+         * Registers the property with the given interface and initializes
+         * it with the provided value. The property becomes immediately
+         * accessible through org.freedesktop.DBus.Properties.
+         *
+         * @param conn   D-Bus connection used to emit change signals.
+         * @param iface  Interface to which this property belongs.
+         * @param name   D-Bus property name.
+         * @param initial Initial property value.
+         */
+        Prop(const Connection& conn,
+             Interface& iface,
+             std::string name,
+             T initial) :
+             _value(initial),
+             _name(name),
+             _conn(conn),
+             _iface(iface)
+        {
+            iface.RegisterProperty<T>(name, [this] { return Get(); }, [this](const T& v) { Set(v); });
+        }
+
+        /**
+         * @brief Assign a new value to the property.
+         *
+         * If the new value differs from the current value, the property
+         * is updated and a PropertiesChanged signal is emitted.
+         *
+         * @param value New property value.
+         * @return Reference to this property.
+         */
+        Prop& operator=(const T& value)
+        {
+            Set(value);
+            return *this;
+        }
+
+        /**
+         * @brief Retrieve the current property value.
+         *
+         * @return The current value of the property.
+         */
+        T Get() const { return _value; }
+
+        /**
+         * @brief Set the property value.
+         *
+         * Updates the property value if it differs from the current value
+         * and emits a PropertiesChanged signal. If the value is unchanged,
+         * no signal is emitted.
+         *
+         * @param value New property value.
+         * @return true if the value was changed, false otherwise.
+         */
+        bool Set(const T& value)
+        {
+            if (value == _value)
+                return false;
+
+            _value = value;
+            EmitPropertiesChanged();
+            return true;
+        }
+
+    private:
+        T _value;
+        std::string _name;
+        const Connection& _conn;
+        Interface& _iface;
+
+        /**
+         * @brief Emit the PropertiesChanged signal for this property.
+         *
+         * Emits org.freedesktop.DBus.Properties::PropertiesChanged for
+         * the owning interface, listing this property as changed.
+         *
+         * This method must only be called after the internal value has
+         * been updated.
+         */
+        void EmitPropertiesChanged()
+        {
+            auto sig = Message::CreateSignal(
+                _iface.GetObject().GetPath(),
+                InterfaceName("org.freedesktop.DBus.Properties"),
+                "PropertiesChanged"
+            );
+
+            sig.SetArgs(
+                _iface.GetName().ToString(),
+                std::map<std::string, std::any>{
+                    { _name, _value }
+                },
+                std::vector<std::string>{}
+            );
+
+            sig.Send(_conn);
+        }
+    };
+
 }
