@@ -370,6 +370,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     SignalSubscription::~SignalSubscription()
     {
+        if (!_active) return;
+
         const auto it = _conn._signalHandlers.find(_key);
         if (it == _conn._signalHandlers.end())
             return;
@@ -384,6 +386,34 @@ namespace JappeStudios::JappeOS::JappeOSCore
             _conn._signalHandlers.erase(it);
         }
     }
+
+    SignalSubscription::SignalSubscription(SignalSubscription&& other) noexcept
+        : _conn(other._conn),
+          _key(std::move(other._key)),
+          _index(other._index),
+          _match(std::move(other._match)),
+          _active(other._active)
+    {
+        other._active = false;
+    }
+
+    /*SignalSubscription& SignalSubscription::operator=(SignalSubscription&& other) noexcept
+    {
+        if (this != &other)
+        {
+            if (_active)
+                RemoveMatchRule();
+
+            _conn   = other._conn;
+            _key    = std::move(other._key);
+            _index  = other._index;
+            _match  = std::move(other._match);
+            _active = other._active;
+
+            other._active = false;
+        }
+        return *this;
+    }*/
 
     void SignalSubscription::AddMatchRule() const
     {

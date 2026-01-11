@@ -954,7 +954,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         ~SignalSubscription();
 
-        SignalSubscription(SignalSubscription&& other) noexcept = delete;
+        SignalSubscription(SignalSubscription&& other) noexcept;
         SignalSubscription& operator=(SignalSubscription&& other) noexcept = delete;
         SignalSubscription(const SignalSubscription&) = delete;
         SignalSubscription& operator=(const SignalSubscription&) = delete;
@@ -964,6 +964,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         Connection::SignalKey _key;
         size_t _index;
         std::string _match;
+        bool _active{true};
 
         void AddMatchRule() const;
         void RemoveMatchRule() const;
