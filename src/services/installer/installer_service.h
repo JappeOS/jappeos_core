@@ -9,8 +9,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         explicit InstallerService(ServiceManager* serviceManager);
         ~InstallerService() override;
 
-        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override;
-        std::string GetName() override { return "InstallerService"; }
+        bool HandleMethodCallLegacy(DBusMessage* msg) override;
+        [[nodiscard]] std::string GetName() const override { return "InstallerService"; }
 
     private:
         bool BeginInstallation();

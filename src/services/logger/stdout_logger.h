@@ -20,7 +20,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
     class StdoutLogger : public LoggerService
     {
     public:
-        explicit StdoutLogger(ServiceManager* serviceManager, DBusConnection* conn);
+        explicit StdoutLogger(ServiceManager* serviceManager, Connection* conn);
         ~StdoutLogger() override;
 
         void Emerg(const std::string &str) override;

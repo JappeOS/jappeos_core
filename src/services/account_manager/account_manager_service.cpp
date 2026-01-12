@@ -6,7 +6,7 @@
 namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 {
 
-    AccountManagerService::AccountManagerService(ServiceManager* serviceManager, DBusConnection* conn) : Service(serviceManager, conn)
+    AccountManagerService::AccountManagerService(ServiceManager* serviceManager, Connection* conn) : Service(serviceManager, conn)
     {
 
     }
@@ -16,50 +16,44 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
     }
 
-    bool AccountManagerService::HandleMethodCall(DBusMessage* msg, const std::string& subInterface)
+    bool AccountManagerService::HandleMethodCallLegacy(DBusMessage* msg)
     {
-        if (!subInterface.empty())
-        {
-            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
-            return true;
-        }
-
         const char* sender = dbus_message_get_sender(msg);
         if (!sender)
         {
-            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_ACCESS_DENIED, "No sender");
+            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_ACCESS_DENIED, "No sender");
             return true;
         }
 
         DBusError error;
         dbus_error_init(&error);
-        const uid_t senderUid = dbus_bus_get_unix_user(_conn, sender, &error);
+        const uid_t senderUid = dbus_bus_get_unix_user(_rawConn, sender, &error);
         if (dbus_error_is_set(&error))
         {
-            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_ACCESS_DENIED, std::string("Failed to get UID for sender ") + sender + ": " + (error.message ? error.message : "unknown"));
+            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_ACCESS_DENIED, std::string("Failed to get UID for sender ") + sender + ": " + (error.message ? error.message : "unknown"));
             dbus_error_free(&error);
             return true;
         }
 
-        const pid_t senderPid = Utils::DBusUtils::GetSenderPID(_conn, msg);
+        const pid_t senderPid = Utils::DBusUtils::GetSenderPID(_rawConn, msg);
 
         const char* member = dbus_message_get_member(msg);
         if (!member)
         {
-            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_METHOD, "No method specified");
+            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_UNKNOWN_METHOD, "No method specified");
             return true;
         }
 
         const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
         if (!sessionMgr->IsManagedUserSession(senderUid))
         {
-            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
+            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_ACCESS_DENIED, "Unknown user");
             return true;
         }
 
         if (!sessionMgr->IsPrivilegedClientProcess(senderPid, true)) // TODO: Make sure to not allow child processes in the future.
         {
-            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
+            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
             return true;
         }
 
@@ -69,13 +63,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             DBusMessageIter args;
             if (!dbus_message_iter_init(msg, &args))
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Expected arguments: username, realName, cryptedPassword");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected arguments: username, realName, cryptedPassword");
                 return true;
             }
 
             if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string username");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string username");
                 return true;
             }
             const char* username = nullptr;
@@ -84,7 +78,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             if (!dbus_message_iter_next(&args) ||
                 dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string realName");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string realName");
                 return true;
             }
             const char* realName = nullptr;
@@ -93,7 +87,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             if (!dbus_message_iter_next(&args) ||
                 dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string cryptedPassword");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string cryptedPassword");
                 return true;
             }
             const char* cryptedPassword = nullptr;
@@ -101,7 +95,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
             if (!username || !realName || !cryptedPassword)
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Null argument(s)");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Null argument(s)");
                 return true;
             }
 
@@ -110,13 +104,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         }
         else if (strcmp(member, "AddUser") == 0)
         {
-            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_METHOD, "Not implemented");
+            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_UNKNOWN_METHOD, "Not implemented");
             return true;
 
             DBusMessageIter iter;
             if (dbus_message_iter_init(msg, &iter))
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Shutdown expects no arguments");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Shutdown expects no arguments");
                 return true;
             }
 
@@ -125,13 +119,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         }
         else if (strcmp(member, "RemoveUser") == 0)
         {
-            SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_METHOD, "Not implemented");
+            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_UNKNOWN_METHOD, "Not implemented");
             return true;
 
             DBusMessageIter iter;
             if (dbus_message_iter_init(msg, &iter))
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Reboot expects no arguments");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Reboot expects no arguments");
                 return true;
             }
 
@@ -143,7 +137,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             DBusMessageIter iter;
             if (dbus_message_iter_init(msg, &iter))
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Suspend expects no arguments");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Suspend expects no arguments");
                 return true;
             }
 
@@ -155,13 +149,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             DBusMessageIter args;
             if (!dbus_message_iter_init(msg, &args))
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Expected arguments: userObject, property");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected arguments: userObject, property");
                 return true;
             }
 
             if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_OBJECT_PATH)
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string userObject");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string userObject");
                 return true;
             }
             const char* userObject = nullptr;
@@ -170,7 +164,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             if (!dbus_message_iter_next(&args) ||
                 dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string property");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string property");
                 return true;
             }
             const char* property = nullptr;
@@ -178,7 +172,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
             if (!userObject || !property)
             {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_INVALID_ARGS, "Null argument(s)");
+                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Null argument(s)");
                 return true;
             }
 
@@ -186,7 +180,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             return true;
         }
 
-        SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_METHOD, std::string("Unknown DBus method called: ") + member);
+        SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_UNKNOWN_METHOD, std::string("Unknown DBus method called: ") + member);
         return false;
     }
 
@@ -199,37 +193,37 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
     {
         if (empty(username) || empty(cryptedPassword))
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_INVALID_ARGS, "Missing username or password.");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_INVALID_ARGS, "Missing username or password.");
             return;
         }
 
         std::vector<std::string> userPaths;
         if (!ListUsers(userPaths))
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, "Failed to list users. Check logs for more information.");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_FAILED, "Failed to list users. Check logs for more information.");
             return;
         }
 
         if (!userPaths.empty())
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, "Cannot create initial user. There's more than 0 users present.");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_FAILED, "Cannot create initial user. There's more than 0 users present.");
             return;
         }
 
         std::string userPath;
         if (!AddUser(username, realName, userPath))
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, "Failed to add user. Check logs for more information.");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_FAILED, "Failed to add user. Check logs for more information.");
             return;
         }
 
         if (!SetUserPassword(userPath, cryptedPassword, ""))
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, "Failed to set user password. Check logs for more information.");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_FAILED, "Failed to set user password. Check logs for more information.");
             return;
         }
 
-        SendSuccessReplyAndLog(_conn, pmsg, "Initial user successfully created.");
+        SendSuccessReplyAndLogLegacy(_rawConn, pmsg, "Initial user successfully created.");
     }
 
     void AccountManagerService::AddUserDbus(DBusMessage* pmsg,
@@ -240,7 +234,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
     {
         if (senderUid != 0)
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Only root may add users");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Only root may add users");
         }
 
         // TODO
@@ -292,7 +286,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
         // Send the message and wait for reply
         DBusMessage* reply = dbus_connection_send_with_reply_and_block(
-            _conn,
+            _rawConn,
             msg,
             DBUS_DEFAULT_SAFE_TIMEOUT,
             &err
@@ -350,7 +344,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
     {
         if (senderUid != 0)
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Only root may add users");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_ACCESS_DENIED, "Only root may add users");
         }
 
         // TODO
@@ -373,16 +367,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
         if (!msg)
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_NO_MEMORY, "Failed to allocate D-Bus message");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_NO_MEMORY, "Failed to allocate D-Bus message");
             return;
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_rawConn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
 
         if (!reply || dbus_error_is_set(&err))
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, "D-Bus call failed: " + std::string(err.message ? err.message : "unknown"));
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_FAILED, "D-Bus call failed: " + std::string(err.message ? err.message : "unknown"));
             dbus_error_free(&err);
             return;
         }
@@ -408,7 +402,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         DBusMessage* replyMsg = dbus_message_new_method_return(pmsg);
         if (!replyMsg)
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_NO_MEMORY, "Failed to allocate reply message");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_NO_MEMORY, "Failed to allocate reply message");
             return;
         }
 
@@ -419,7 +413,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         DBusMessageIter arrayIterOut;
         if (!dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "o", &arrayIterOut))
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_NO_MEMORY, "Failed to open array container for reply");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_NO_MEMORY, "Failed to open array container for reply");
             dbus_message_unref(replyMsg);
             return;
         }
@@ -433,9 +427,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         dbus_message_iter_close_container(&iter, &arrayIterOut);
 
         // Send the reply back to the caller
-        if (!dbus_connection_send(_conn, replyMsg, nullptr))
+        if (!dbus_connection_send(_rawConn, replyMsg, nullptr))
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, "Failed to send reply message");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_FAILED, "Failed to send reply message");
             dbus_message_unref(replyMsg);
             return;
         }
@@ -464,7 +458,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             return false;
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_rawConn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
 
         if (!reply || dbus_error_is_set(&err))
@@ -502,7 +496,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         DBusValue val;
         if (!GetUserProperty(userObject, property, val))
         {
-            SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, "Failed to get user property");
+            SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_FAILED, "Failed to get user property");
         }
 
         dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, val.signature.c_str(), &variantIter);
@@ -535,12 +529,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             {
                 // Catch-all fallback
                 const std::string msg = "Unsupported variant type in GetUserPropertyDbus";
-                SendErrorReplyAndLog(_conn, pmsg, DBUS_ERROR_FAILED, msg);
+                SendErrorReplyAndLogLegacy(_rawConn, pmsg, DBUS_ERROR_FAILED, msg);
             }
         }, val.value);
 
         dbus_message_iter_close_container(&iter, &variantIter);
-        dbus_connection_send(_conn, reply, nullptr);
+        dbus_connection_send(_rawConn, reply, nullptr);
         dbus_message_unref(reply);
     }
 
@@ -578,7 +572,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         }
 
         // Send message and wait for reply
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_conn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_rawConn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
         dbus_message_unref(msg);
 
         if (dbus_error_is_set(&err))
@@ -716,7 +710,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
         // Send the message and wait for reply
         DBusMessage* reply = dbus_connection_send_with_reply_and_block(
-            _conn,
+            _rawConn,
             msg,
             DBUS_DEFAULT_SAFE_TIMEOUT,
             &err
@@ -786,7 +780,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
         // Send and wait for reply
         DBusMessage* reply = dbus_connection_send_with_reply_and_block(
-            _conn,
+            _rawConn,
             msg,
             DBUS_DEFAULT_SAFE_TIMEOUT,
             &err

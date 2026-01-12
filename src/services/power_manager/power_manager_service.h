@@ -6,15 +6,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
     class PowerManagerService : public Service
     {
     public:
-        explicit PowerManagerService(ServiceManager* serviceManager, DBusConnection* conn);
+        explicit PowerManagerService(ServiceManager* serviceManager, Connection* conn);
         ~PowerManagerService() override;
-
-        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override;
-        std::string GetName() override { return "PowerManagerService"; }
+        [[nodiscard]] std::string GetName() const override { return "PowerManagerService"; }
 
     private:
-        void Shutdown(DBusMessage* pmsg, uid_t senderUid, pid_t senderPid);
-        void Reboot(DBusMessage* msg, uid_t senderUid, pid_t senderPid);
-        void Suspend(DBusMessage* msg, uid_t senderUid, pid_t senderPid);
+        Object _mainObject;
+
+        void SharedPolicy(const Message& message) const;
+
+        void OnShutdown(const Message& message) const;
+        void OnReboot(const Message& message) const;
+        void OnSuspend(const Message& message) const;
     };
 }

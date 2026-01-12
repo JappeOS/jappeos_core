@@ -14,6 +14,7 @@
 
 #include "event.h"
 #include "globals.h"
+#include "dbus/dbus_wrapper.h"
 #include "services/service.h"
 
 #include "services/logger/stdout_logger.h"
@@ -56,17 +57,17 @@ namespace JappeStudios::JappeOS::JappeOSCore
         bool _shouldRun = true;
         uint8_t _exitCode = EXIT_SUCCESS;
         ApplicationState _state = ApplicationState::Initializing;
-        DBusConnection* _conn = nullptr;
+        Connection* _conn = nullptr;
         DBusError* _err = new DBusError;
         pollfd _fds[2]{};
         Services::ServiceManager* _serviceManager = nullptr;
 
         void Initialize();
-        void InitDBus(Services::Logger::LoggerService* logger);
+        void InitDBus();
         void InitServices() const;
         void Update();
-        void HandleDBusMessage(Services::Logger::LoggerService* logger, DBusMessage* msg) const;
-        void HandleMethodCall(Services::Logger::LoggerService* logger, Services::Service* svc, DBusMessage* msg, const char* interface) const;
+        void HandleDBusMessageLegacy(Services::Logger::LoggerService* logger, DBusMessage* msg) const;
+        void HandleMethodCallLegacy(Services::Logger::LoggerService* logger, Services::Service* svc, DBusMessage* msg, const char* interface) const;
         void CleanUp() const;
 
     private:

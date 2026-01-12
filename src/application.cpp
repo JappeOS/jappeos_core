@@ -125,39 +125,37 @@ namespace JappeStudios::JappeOS::JappeOSCore
         sa.sa_handler = SignalHandler;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = 0;
-        sigaction(SIGABRT, &sa, nullptr);
-        sigaction(SIGBUS, &sa, nullptr);
-        sigaction(SIGFPE, &sa, nullptr);
-        sigaction(SIGHUP, &sa, nullptr);
-        sigaction(SIGILL, &sa, nullptr);
-        sigaction(SIGPIPE, &sa, nullptr);
-        sigaction(SIGQUIT, &sa, nullptr);
-        sigaction(SIGSEGV, &sa, nullptr);
-        sigaction(SIGSYS, &sa, nullptr);
-        sigaction(SIGUSR1, &sa, nullptr);
-        sigaction(SIGUSR2, &sa, nullptr);
-        sigaction(SIGXCPU, &sa, nullptr);
-        sigaction(SIGXFSZ, &sa, nullptr);
+        // TODO
+        //sigaction(SIGABRT, &sa, nullptr);
+        //sigaction(SIGBUS, &sa, nullptr);
+        //sigaction(SIGFPE, &sa, nullptr);
+        //sigaction(SIGHUP, &sa, nullptr);
+        //sigaction(SIGILL, &sa, nullptr);
+        //sigaction(SIGPIPE, &sa, nullptr);
+        //sigaction(SIGQUIT, &sa, nullptr);
+        //sigaction(SIGSEGV, &sa, nullptr);
+        //sigaction(SIGSYS, &sa, nullptr);
+        //sigaction(SIGUSR1, &sa, nullptr);
+        //sigaction(SIGUSR2, &sa, nullptr);
+        //sigaction(SIGXCPU, &sa, nullptr);
+        //sigaction(SIGXFSZ, &sa, nullptr);
         sigaction(SIGINT, &sa, nullptr);
         sigaction(SIGTERM, &sa, nullptr);
 
         _serviceManager = new Services::ServiceManager();
+        InitDBus();
+        _serviceManager->InitDBus(_conn);
+
         const auto logger = _serviceManager->Register<Services::Logger::StdoutLogger>();
         NULL_SAFE_CALL(logger, Debug("Initializing..."));
-
-        // TODO: Init other services
-
-        InitDBus(logger);
-        _serviceManager->InitDBus(_conn);
         InitServices();
-
         NULL_SAFE_CALL(logger, Debug("Initialization done!"));
     }
 
-    void Application::InitDBus(Services::Logger::LoggerService* logger)
+    void Application::InitDBus()
     {
         dbus_error_init(_err);
-        _conn = dbus_bus_get(DBUS_BUS_SYSTEM, _err);
+        _conn = new Connection(DBUS_BUS_SYSTEM);
 
         if (dbus_error_is_set(_err))
         {
@@ -166,40 +164,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
             throw std::runtime_error("D-Bus error: " + message);
         }
 
-        if (!_conn)
-        {
-            throw std::runtime_error("Failed to connect to D-Bus");
-        }
-
-        const int ret = dbus_bus_request_name(_conn, Services::DBUS_INTERFACE, DBUS_NAME_FLAG_DO_NOT_QUEUE, _err);
-        if (dbus_error_is_set(_err))
-        {
-            const std::string message = _err->message;
-            dbus_error_free(_err);
-            throw std::runtime_error("D-Bus error: " + message);
-        }
-
-        if (ret != DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER)
-        {
-            // handle name acquisition failure
-            const std::string message = _err->message;
-            dbus_error_free(_err);
-            throw std::runtime_error("Failed to acquire D-Bus name: " + message);
-        }
-
-        dbus_bus_add_match(_conn, "type='method_call'", _err);
-        if (dbus_error_is_set(_err))
-        {
-            const std::string message = _err->message;
-            dbus_error_free(_err);
-            throw std::runtime_error("Failed to add match rule: " + message);
-        }
-        dbus_connection_flush(_conn);
-
-        int dbus_fd;
-        dbus_connection_get_unix_fd(_conn, &dbus_fd);
-
-        NULL_SAFE_CALL(logger, Debug("Daemon running. Press Ctrl+C to exit."));
+        _conn->AcquireName(Services::DBUS_INTERFACE, DBUS_NAME_FLAG_DO_NOT_QUEUE);
+        _conn->AddMatch("type='method_call'"); // TODO: Don't allow all method calls
+        _conn->Flush();
+        const int dbus_fd = _conn->GetUnixFd();
 
         _fds[0].fd = dbus_fd;
         _fds[0].events = POLLIN;
@@ -235,20 +203,21 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         if (_fds[0].revents & POLLIN)
         {
-            while (dbus_connection_read_write(_conn, 0))
+            while (_conn->ReadWrite(0))
             {
-                DBusMessage* msg = dbus_connection_pop_message(_conn);
-                if (!msg) break;
+                auto msg = _conn->PopMessage();
+                if (!msg.has_value() || _serviceManager == nullptr) break;
 
                 OnMessageHandlerPre();
-                HandleDBusMessage(logger, msg);
-                dbus_message_unref(msg);
+                HandleDBusMessageLegacy(logger, msg.value().GetRawMessage());
+                _conn->HandleMessage(msg.value());
+                //_serviceManager->HandleMessage(msg.value());
                 OnMessageHandlerPost();
             }
         }
     }
 
-    void Application::HandleDBusMessage(Services::Logger::LoggerService* logger, DBusMessage* msg) const
+    void Application::HandleDBusMessageLegacy(Services::Logger::LoggerService* logger, DBusMessage* msg) const
     {
         const char* interface = dbus_message_get_interface(msg);
         if (!interface)
@@ -262,10 +231,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
             const auto& signalSubscribers = _serviceManager->ListSignalSubscribers();
             if (const auto subscribers = signalSubscribers.find(key); subscribers != signalSubscribers.end())
             {
-                for (auto& svcName : subscribers->second)
+                for (const auto svc : subscribers->second)
                 {
-                    const auto svc = services[svcName];
-                    HandleMethodCall(logger, svc, msg, interface);
+                    HandleMethodCallLegacy(logger, svc, msg, interface);
                 }
             }
             return;
@@ -273,11 +241,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         if (const auto it = services.find(interface); it != services.end())
         {
-            HandleMethodCall(logger, it->second, msg, interface);
+            HandleMethodCallLegacy(logger, it->second, msg, interface);
         }
     }
 
-    void Application::HandleMethodCall(Services::Logger::LoggerService* logger, Services::Service* svc, DBusMessage* msg, const char* interface) const
+    void Application::HandleMethodCallLegacy(Services::Logger::LoggerService* logger, Services::Service* svc, DBusMessage* msg, const char* interface) const
     {
         if (!msg)
         {
@@ -287,24 +255,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         try
         {
-            const auto full = std::string(interface);
-            const auto svcInterface = Services::Service::GetFullInterfaceName(svc);
-            std::string subInterface;
-
-            if (full.starts_with(svcInterface))
-            {
-                std::size_t pos = svcInterface.size();
-                if (pos < full.size() && full[pos] == '.')
-                    ++pos; // remove the dot too
-
-                subInterface = full.substr(pos);
-            }
-            else
-            {
-                throw std::logic_error("BUG: `full` should always begin with `svcInterface`!");
-            }
-
-            if (!svc->HandleMethodCall(msg, subInterface))
+            if (!svc->HandleMethodCallLegacy(msg))
             {
                 NULL_SAFE_CALL(logger, Debug(std::string("Method not handled in service `" + svc->GetName() + "` with interface: ") + interface));
             }
@@ -319,11 +270,14 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         const auto logger = NULL_SAFE_CALL_RET(_serviceManager, Get<Services::Logger::LoggerService>());
         NULL_SAFE_CALL(logger, Debug("Cleaning up..."));
-        dbus_connection_unref(_conn);
         dbus_error_free(_err);
         delete _err;
-        NULL_SAFE_CALL(logger, Debug("Cleanup done!"));
+        _serviceManager->RunBeforeCleanup(logger, [&]
+        {
+            NULL_SAFE_CALL(logger, Debug("Cleanup done!"));
+        });
         delete _serviceManager;
+        delete _conn;
     }
 
     void Application::FailFastFatalError(const std::string& errCode, const std::string& message, const std::string& stack) const
@@ -332,7 +286,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         const auto logger = NULL_SAFE_CALL_RET(_serviceManager, Get<Services::Logger::LoggerService>());
 
         auto newErrCode = errCode;
-        for (auto & c: newErrCode) c = toupper(c);
+        for (auto& c: newErrCode) c = toupper(c);
         std::erase(newErrCode, ' ');
 
         const auto newStack = stack.empty() ? PrintStackTrace() : stack;

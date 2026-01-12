@@ -32,36 +32,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::vector<pid_t> privilegedClientProcesses;
     };
 
-    class LoginManager;
-
-    // TODO: SEVERE: FIX INFINITE LOOP OR FREEZE
-    // Add comprehensive error handling throughout
-    // Implement Polkit authorization for session management
-    // Add logging for all major operations
-    // Handle edge cases: user switching, session recovery, crash handling
-    // Add session state tracking (active, locked, closing, etc.)
-    // Implement proper signal handling for clean shutdown
-    // Session locking/unlocking support
-    // Multi-seat proper support
-    // Session migration between seats
-    // Idle timeout handling
-    // Integration with power management
-    // --
-    // Test rapid login/logout sequences
-    // Test concurrent logins
-    // Test crash recovery (what happens if compositor dies?)
-    // Test with multiple users
-    // Test session switching
-    // Verify all processes are cleaned up on logout
-    // Test with PAM modules that do actual authentication
     class SessionManagerService : public Service
     {
     public:
-        explicit SessionManagerService(ServiceManager* serviceManager, DBusConnection* conn);
+        explicit SessionManagerService(ServiceManager* serviceManager, Connection* conn);
         ~SessionManagerService() override;
 
-        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override;
-        std::string GetName() override { return "SessionManagerService"; }
+        bool HandleMethodCallLegacy(DBusMessage* msg) override;
+        [[nodiscard]] std::string GetName() const override { return "SessionManagerService"; }
 
         [[nodiscard]] bool IsLiveEnvironment() const { return _isLiveEnvironment; }
 

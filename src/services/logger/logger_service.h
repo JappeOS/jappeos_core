@@ -10,7 +10,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
     class LoggerService : public Service
     {
     public:
-        explicit LoggerService(ServiceManager* serviceManager, DBusConnection* conn) : Service(serviceManager, conn) {}
+        explicit LoggerService(ServiceManager* serviceManager, Connection* conn) : Service(serviceManager, conn) {}
 
         virtual void Emerg(const std::string& str) = 0;
         virtual void Alert(const std::string& str) = 0;
@@ -27,14 +27,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
         }*/
 
         // TODO: More error/safety checking
-        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override
+        bool HandleMethodCallLegacy(DBusMessage* msg) override
         {
-            if (!subInterface.empty())
-            {
-                SendErrorReplyAndLog(_conn, msg, DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
-                return true;
-            }
-
             const char* member = dbus_message_get_member(msg);
             if (strcmp(member, "Log") != 0)
             {
@@ -44,14 +38,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
             DBusMessageIter args;
             if (!dbus_message_iter_init(msg, &args))
             {
-                SendErrorReply(_conn, msg, "Invalid arguments");
+                SendErrorReply(_rawConn, msg, "Invalid arguments");
                 return true;
             }
 
             // Extract log level
             if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReply(_conn, msg, "Expected log level as first argument");
+                SendErrorReply(_rawConn, msg, "Expected log level as first argument");
                 return true;
             }
             const char* level;
@@ -61,7 +55,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
             // Extract log message
             if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReply(_conn, msg, "Expected message string as second argument");
+                SendErrorReply(_rawConn, msg, "Expected message string as second argument");
                 return true;
             }
             const char* message;
@@ -82,16 +76,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
             else if (lvlStr == "debug") Debug(msgStr);
             else
             {
-                SendErrorReply(_conn, msg, "Unknown log level: " + lvlStr);
+                SendErrorReply(_rawConn, msg, "Unknown log level: " + lvlStr);
                 return true;
             }
 
             // Send success reply
-            SendSuccessReplyAndLog(_conn, msg);
+            SendSuccessReplyAndLogLegacy(_rawConn, msg);
             return true;
         }
 
-        std::string GetName() override { return "LoggerService"; }
+        [[nodiscard]] std::string GetName() const override { return "LoggerService"; }
 
     private:
         static void SendErrorReply(DBusConnection* conn, DBusMessage* msg, const std::string& errorMsg)

@@ -15,11 +15,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
     class AccountManagerService : public Service
     {
     public:
-        explicit AccountManagerService(ServiceManager* serviceManager, DBusConnection* conn);
+        explicit AccountManagerService(ServiceManager* serviceManager, Connection* conn);
         ~AccountManagerService() override;
 
-        bool HandleMethodCall(DBusMessage* msg, const std::string& subInterface) override;
-        std::string GetName() override { return "AccountManagerService"; }
+        bool HandleMethodCallLegacy(DBusMessage* msg) override;
+        [[nodiscard]] std::string GetName() const override { return "AccountManagerService"; }
 
     private:
         void CreateInitialUserWithPasswordDbus(DBusMessage* pmsg,

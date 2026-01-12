@@ -6,7 +6,14 @@ using namespace JappeStudios::JappeOS::JappeOSCore::Services;
 namespace JappeStudios::JappeOS::JappeOSCore::Services
 {
 
-    void Service::SendErrorReplyAndLog(DBusConnection* conn, DBusMessage* msg, const std::string& errorName, const std::string& errorMsg)
+    // Service
+
+    Service::Service(ServiceManager* serviceManager, Connection* conn) : _serviceManager(serviceManager), _rawConn(conn->GetRawConnection()), _conn(conn)
+    {
+
+    }
+
+    void Service::SendErrorReplyAndLogLegacy(DBusConnection* conn, DBusMessage* msg, const std::string& errorName, const std::string& errorMsg)
     {
         DBusMessage* error = dbus_message_new_error(
             msg,
@@ -20,7 +27,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             std::format("SendErrorReply(service='{}', errorName='{}', errorMsg='{}')", GetName(), errorName, errorMsg));
     }
 
-    void Service::SendSuccessReplyAndLog(DBusConnection* conn, DBusMessage* msg, const std::string& message)
+    void Service::SendSuccessReplyAndLogLegacy(DBusConnection* conn, DBusMessage* msg, const std::string& message)
     {
         DBusMessage* reply = dbus_message_new_method_return(msg);
         dbus_connection_send(conn, reply, nullptr);
@@ -31,9 +38,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
                              std::format("SendSuccessReply(service='{}', msg='{}')", GetName(), message));
     }
 
-    void Service::SubscribeToSignal(const std::string& signalName) { _serviceManager->SubscribeServiceToSignal(signalName, GetFullInterfaceName(this)); }
+    void Service::SubscribeToSignalLegacy(const std::string& signalName) { _serviceManager->SubscribeServiceToSignalLegacy(signalName, this); }
 
-    void Service::RegisterSubInterface(const std::string& name) { _serviceManager->RegisterServiceSubInterface(this, name); }
+    // ServiceManager
 
     ServiceManager::~ServiceManager()
     {
@@ -43,6 +50,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             {
                 try
                 {
+                    const auto svcIfaceName = found->second->GetBaseInterface().ToString();
+                    if (const auto& it = _runBeforeCleanup.find(svcIfaceName); it != _runBeforeCleanup.end())
+                    {
+                        for (const auto& fun : it->second)
+                        {
+                            try { fun(); }
+                            catch (const std::exception& e) { NULL_SAFE_CALL(Get<Logger::LoggerService>(), Err(std::string("Pre-cleanup runnable failed for `") + svcIfaceName + "`: " + e.what())); }
+                        }
+                    }
+
                     delete found->second;
                 }
                 catch (const std::exception& e)
@@ -54,8 +71,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
         }
 
         _order.clear();
-        _servicesNamed.clear();
+        _interfaceServiceMap.clear();
         _signalSubscribers.clear();
+    }
+
+    void ServiceManager::LogErr(const std::string& str)
+    {
+        NULL_SAFE_CALL(Get<Logger::LoggerService>(), Err(str));
     }
 
 }
