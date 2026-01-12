@@ -5,21 +5,18 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Utils
 {
-    /// Defines a safe timeout to wait for a reply for.
-    #define DBUS_DEFAULT_SAFE_TIMEOUT 5000
-
     class DBusUtils
     {
     public:
         /// Returns the process ID that a message was sent from.
-        static pid_t GetSenderPID(DBusConnection *conn, DBusMessage *msg)
+        static pid_t GetSenderPID(DBusConnection* conn, DBusMessage* msg)
         {
             const char *sender = dbus_message_get_sender(msg);
             if (!sender)
                 return 0; // No sender info (e.g., message from bus itself)
 
             // Create a method call to org.freedesktop.DBus
-            DBusMessage *method = dbus_message_new_method_call(
+            DBusMessage* method = dbus_message_new_method_call(
                 "org.freedesktop.DBus",       // destination (the bus daemon)
                 "/org/freedesktop/DBus",      // object path
                 "org.freedesktop.DBus",       // interface
@@ -41,7 +38,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Utils
             // Send the method call and wait for a reply
             DBusError error;
             dbus_error_init(&error);
-            DBusMessage *reply = dbus_connection_send_with_reply_and_block(conn, method, -1, &error);
+            DBusMessage* reply = dbus_connection_send_with_reply_and_block(conn, method, -1, &error);
             dbus_message_unref(method);
 
             if (dbus_error_is_set(&error))
