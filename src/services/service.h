@@ -69,7 +69,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
         /// Returns the name of the service.
         [[nodiscard]] virtual std::string GetName() const = 0;
 
-        [[nodiscard]] InterfaceName GetBaseInterface() const
+        [[nodiscard]] InterfaceName GetBaseInterface()
         {
             if (!_baseInterface.has_value())
                 _baseInterface = InterfaceName(std::string(DBUS_INTERFACE) + "." + GetName());
@@ -77,7 +77,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
             return _baseInterface.value();
         }
 
-        [[nodiscard]] ObjectPath GetBaseObjectPath() const
+        [[nodiscard]] ObjectPath GetBaseObjectPath()
         {
             if (!_baseObjectPath.has_value())
                 _baseObjectPath = ObjectPath(std::string(DBUS_PATH) + "/" + GetName());
@@ -90,9 +90,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
         DBusConnection* _rawConn;
         Connection* _conn;
 
-    private:
-        static std::optional<InterfaceName> _baseInterface;
-        static std::optional<ObjectPath> _baseObjectPath;
+        std::optional<InterfaceName> _baseInterface = std::nullopt;
+        std::optional<ObjectPath> _baseObjectPath = std::nullopt;
     };
 
     class ServiceManager

@@ -1,0 +1,407 @@
+#pragma once
+
+#include <format>
+#include <functional>
+#include <map>
+#include <ranges>
+#include <string>
+#include <typeindex>
+#include <unordered_map>
+#include <vector>
+#include <dbus/dbus.h>
+
+#include "../globals.h"
+#include "../dbus/dbus_wrapper.h"
+
+namespace JappeStudios::JappeOS::JappeOSCore {
+    class Message;
+    class Connection;
+}
+
+// TODO: Move method implementations to source file
+namespace JappeStudios::JappeOS::JappeOSCore::Services
+{
+#define NO_SETTER() throw DBusException(DBUS_ERROR_PROPERTY_READ_ONLY);
+
+    class LoggerService;
+    class ServiceManager;
+    static auto DBUS_INTERFACE = "org.jappeos.Core";
+
+    class Service
+    {
+    public:
+        explicit Service(ServiceManager* serviceManager, Connection* conn);
+        virtual ~Service() = default;
+
+        /// Initializes D-Bus and adds match rule for this service.
+        virtual void InitDBus(Connection* connection)
+        {
+            DBusError err;
+            dbus_error_init(&err);
+
+            _conn = connection;
+
+            // TODO: REMOVE FOLLOWING LINE AFTER DEPRECATING THE LEGACY MESSAGE HANDLING SYSTEM.
+            dbus_bus_add_match(_conn->GetRawConnection(), std::format("type='method_call',interface='{}'", GetFullInterfaceName()).c_str(), &err);
+            dbus_error_free(&err);
+        }
+
+        #pragma region LegacyMethods
+
+        /// Sends an error reply to the connection for a message. Logging before or after calling this method is not required,
+        /// since this method logs the `errorName` and `errorMsg` parameters automatically.
+        void SendErrorReplyAndLogLegacy(DBusConnection* conn, DBusMessage* msg, const std::string& errorName, const std::string& errorMsg);
+
+        /// Sends a success reply to the connection for a message. Logging before or after calling this method is not required,
+        /// since this method logs the `message` parameter automatically.
+        void SendSuccessReplyAndLogLegacy(DBusConnection* conn, DBusMessage* msg, const std::string& message = std::string());
+
+        /// Allows a signal to be received through `HandleMethodCall`, match rules still need to be added separately.
+        /// `signalName` is in the following format: "<interface>.<member>".
+        void SubscribeToSignalLegacy(const std::string& signalName);
+
+        /// Handles incoming D-Bus messages and signals.
+        virtual bool HandleMethodCallLegacy(DBusMessage* message) { return false; }
+
+        #pragma endregion
+
+        /// Allocates a specific method call interface path for this service.
+        void OwnInterface(const std::string& interface);
+
+        /// Subscribes this service to signals from a specific source. Format: "<interface>.<member>".
+        void AcceptSignals(const std::string& fullMemberPath);
+
+        template<typename T>
+        void RegisterProperty(const std::string& propertyName, const std::function<T()>& getter, const std::function<bool(const T&)>& setter)
+        {
+            static_assert(!std::is_void_v<T>, "Property must have a getter");
+
+            const auto pos = propertyName.rfind('.');
+            std::pair<std::string, std::string> partialPropertyPath;
+
+            if (pos == std::string::npos)
+            {
+                // No dot at all
+                partialPropertyPath = { "", propertyName };
+            }
+            else
+            {
+                partialPropertyPath =
+                {
+                    propertyName.substr(0, pos),   // empty if pos == 0
+                    propertyName.substr(pos + 1)           // safe even if dot is first
+                };
+            }
+
+            const auto fullInterface = partialPropertyPath.first.empty() ? this->GetFullInterfaceName() : this->GetFullInterfaceName() + "." + partialPropertyPath.first;
+            const std::string propName = partialPropertyPath.second;
+
+            // Getter
+            {
+                if (!_getterRegistry.contains(fullInterface))
+                {
+                    RegisterMethod(fullInterface + ".GetAll", [this] (const Message& m) { OnGetAll(m); });
+                }
+
+                _getterRegistry[fullInterface][propName] =
+                    [getter]() -> std::any
+                    {
+                        return std::make_any<T>(getter());
+                    };
+
+                _methods.emplace(
+                    fullInterface + "." + propName + ".Get",
+                    [this, fullInterface, propName] (const Message& msg)
+                    {
+                        const auto& getter = _getterRegistry.at(fullInterface).at(propName);
+                        auto reply = Message::CreateMethodReturn(msg);
+                        reply.SetArgs(getter());
+                        reply.Send(*_conn);
+                    }
+                );
+            }
+
+            // Setter
+            {
+                _methods.emplace(
+                    fullInterface + "." + propName + ".Set",
+                    [fullInterface, getter, setter, this, propName] (const Message& msg)
+                    {
+                        const auto args = msg.GetArgs<std::string, std::string, std::any>();
+                        const auto arg = std::get<2>(args);
+                        const bool changed = setter(arg);
+                        Message::CreateMethodReturn(msg).Send(*_conn);
+                        if (!changed) return;
+                        try
+                        {
+                            auto propsChangedSignal = Message::CreateSignal(
+                                msg.GetPath(),
+                                "org.freedesktop.DBus.Properties",
+                                "PropertiesChanged"
+                            );
+                            const std::map<std::string, std::any> changes = { {propName, getter()} };
+                            propsChangedSignal.SetArgs(fullInterface, changes, std::vector<std::string>{});
+                            propsChangedSignal.Send(*_conn);
+                        }
+                        catch (const std::exception& e)
+                        {
+                            LogErr(std::string("Failed to send `PropertiesChanged` signal for interface `fullInterface`: ") + e.what());
+                        }
+                    }
+                );
+            }
+        }
+
+        template<typename F>
+        void RegisterMethod(const std::string& methodName, F&& handler)
+        {
+            const auto pos = methodName.rfind('.');
+            std::pair<std::string, std::string> partialMethodPath;
+
+            if (pos == std::string::npos)
+            {
+                // No dot at all
+                partialMethodPath = { "", methodName };
+            }
+            else
+            {
+                partialMethodPath =
+                {
+                    methodName.substr(0, pos),   // empty if pos == 0
+                    methodName.substr(pos + 1)           // safe even if dot is first
+                };
+            }
+
+            const auto fullInterface = partialMethodPath.first.empty() ? this->GetFullInterfaceName() : this->GetFullInterfaceName() + "." + partialMethodPath.first;
+            _conn->AddMatch(std::format("type='method_call',interface='{}',member='{}'", fullInterface, partialMethodPath.second));
+            _methods.emplace(
+                fullInterface + "." + partialMethodPath.second,
+                std::function<void(const Message&)>(std::forward<F>(handler))
+            );
+
+            OwnInterface(fullInterface);
+        }
+
+        template<typename F>
+        void SubscribeSignal(const std::string& signalName, F&& handler)
+        {
+            const auto pos = signalName.rfind('.');
+
+            if (pos == std::string::npos)
+            {
+                throw std::invalid_argument("Input string contains no dot");
+            }
+
+            std::pair ifaceMember
+            {
+                signalName.substr(0, pos),        // part before last dot
+                signalName.substr(pos + 1)                // part after last dot
+            };
+
+            _conn->AddMatch(std::format("type='signal',interface='{}',member='{}'", ifaceMember.first, ifaceMember.second));
+            _methods.emplace(
+                signalName,
+                std::function<void(const Message&)>(std::forward<F>(handler))
+            );
+
+            AcceptSignals(signalName);
+        }
+
+        template<typename F>
+        void RegisterMethodCallPolicy(F&& handler)
+        {
+            _methodCallPolicies.push_back(std::function<void(const Message&)>(std::forward<F>(handler)));
+        }
+
+        void OnGetAll(const Message& msg)
+        {
+            const auto iface = std::get<0>(msg.GetArgs<std::string>());
+            std::map<std::string, std::any> values;
+
+            for (auto& [propName, getter] : _getterRegistry[iface])
+            {
+                if (getter)
+                    values[propName] = getter();
+            }
+
+            auto reply = Message::CreateMethodReturn(msg);
+            reply.SetArgs(values);
+            reply.Send(*_conn);
+        }
+
+        bool CallMethod(const std::string& fullMemberPath, const Message& message);
+
+        void LogErr(const std::string& str) const;
+
+        /// Returns the name of the service.
+        virtual std::string GetName() = 0;
+
+        std::string GetFullInterfaceName()
+        {
+            if (_fullInterfaceName.empty())
+                _fullInterfaceName = std::string(DBUS_INTERFACE) + "." + GetName();
+
+            return _fullInterfaceName;
+        }
+
+    protected:
+        ServiceManager* _serviceManager;
+        DBusConnection* _rawConn;
+        Connection* _conn;
+
+    private:
+        std::string _fullInterfaceName;
+        std::unordered_map<std::string, std::function<void(const Message&)>> _methods; // key: interface.methodName
+        std::vector<std::function<void(const Message&)>> _methodCallPolicies;
+        std::unordered_map<std::string /* iface */,  std::map<std::string /* prop */, std::function<std::any()> /* getter */>> _getterRegistry;
+    };
+
+    // TODO: Support for properties
+    class ServiceManager
+    {
+    public:
+        /// Initializes D-Bus for all services.
+        void InitDBus(Connection* conn)
+        {
+            _conn = conn;
+            _conn->AddMatch("type='method_call',interface='org.freedesktop.DBus.Properties',member='Get'");
+            _conn->AddMatch("type='method_call',interface='org.freedesktop.DBus.Properties',member='Set'");
+            _conn->AddMatch("type='method_call',interface='org.freedesktop.DBus.Properties',member='GetAll'");
+
+            for (auto& service : _services)
+                service.second->InitDBus(_conn);
+
+            _dbusInitialized = true;
+        }
+
+        /// Registers a service that lives for the entire lifecycle of this daemon.
+        template <typename T>
+        std::enable_if_t<std::is_base_of_v<Service, T>, T*> Register()
+        {
+            //static_assert(std::is_default_constructible_v<T>, "Service must be default-constructible"); TODO
+
+            const std::type_index key = typeid(T);
+            if (_services.contains(key))
+                return nullptr;
+
+            T* instance = new T(this, _dbusInitialized ? _conn : nullptr);
+            _order.push_back(key);
+            _services.emplace(key, instance);
+            _interfaceServiceMap.emplace(instance->GetFullInterfaceName(), instance); // TODO: REMOVE THIS LINE AFTER DEPRECATING THE LEGACY MESSAGE HANDLING SYSTEM.
+
+            if (_dbusInitialized)
+                instance->InitDBus(_conn);
+
+            return instance;
+        }
+
+        /// Returns a pointer to a service by-type.
+        template <typename T>
+        std::enable_if_t<std::is_base_of_v<Service, T>, T*> Get()
+        {
+            // Look for a service instance that can be cast to T*
+            for (const auto& [typeIdx, service] : _services)
+            {
+                if (T* casted = dynamic_cast<T*>(service))
+                {
+                    return casted;
+                }
+            }
+            return nullptr;
+        }
+
+        void HandleMessage(const Message& message)
+        {
+            auto interfaceName = message.GetInterface();
+            const auto methodName = message.GetMember();
+
+            if (interfaceName.empty() || methodName.empty())
+                return;
+
+            auto fullMemberPath = interfaceName + "." + methodName;
+
+            if (message.GetType() == DBUS_MESSAGE_TYPE_SIGNAL)
+            {
+                if (const auto subscribers = _signalSubscribers.find(fullMemberPath); subscribers != _signalSubscribers.end())
+                {
+                    for (const auto& svc : subscribers->second)
+                    {
+                        svc->CallMethod(fullMemberPath, message);
+                    }
+                }
+                return;
+            }
+
+            if (interfaceName == "org.freedesktop.DBus.Properties" && message.GetType() == DBUS_MESSAGE_TYPE_METHOD_CALL)
+            {
+                if (methodName == "Get")
+                {
+                    const auto args = message.GetArgs<std::string, std::string>();
+                    interfaceName = std::get<0>(args) + "." + std::get<1>(args);
+                }
+                else if (methodName == "Set")
+                {
+                    const auto args = message.GetArgs<std::string, std::string, std::any>();
+                    interfaceName = std::get<0>(args) + "." + std::get<1>(args);
+                }
+                else if (methodName == "GetAll")
+                {
+                    const auto args = message.GetArgs<std::string>();
+                    interfaceName = std::get<0>(args);
+                }
+                else return;
+
+                if (interfaceName.empty()) return;
+                fullMemberPath = interfaceName + "." + methodName;
+            }
+
+            if (const auto it = _interfaceServiceMap.find(interfaceName); it != _interfaceServiceMap.end())
+            {
+                if (!it->second->CallMethod(fullMemberPath, message))
+                    throw DBusException(DBUS_ERROR_UNKNOWN_METHOD, "Unknown method");
+            }
+        }
+
+        /// Registers a mapping to access a specific service from the specific interface name. Used for handling method
+        /// calls, and ensuring that they go to the correct destination. The same `interfaceName` cannot point to two
+        /// or more services at the same time, unlike how signals work.
+        void RegisterInterfaceToService(const std::string& interfaceName, Service* service)
+        {
+            _interfaceServiceMap[interfaceName] = service;
+        }
+
+        /// Subscribes a service to a signal. `signalName` is in the following format: "<interface>.<member>".
+        void SubscribeServiceToSignal(const std::string& signalName, Service* service)
+        {
+            _signalSubscribers[signalName].push_back(service);
+        }
+
+        /// Runs a specific task `runnable` before the `service` is destroyed.
+        void RunBeforeCleanup(Service* service, const std::function<void()>& runnable)
+        {
+            _runBeforeCleanup[service->GetFullInterfaceName()].push_back(runnable);
+        }
+
+        /// Returns a map of all services.
+        [[nodiscard]] const std::map<std::type_index, Service*>& List() const { return _services; }
+
+        /// Returns a map of service names and service objects.
+        [[nodiscard]] const std::map<std::string, Service*>& ListNamed() const { return _interfaceServiceMap; }
+
+        /// Returns a map of signal subscribers, with the key being the signal name ("<interface>.<member>") and the
+        /// value being a vector of full interface names for the subscribers to that signal name.
+        [[nodiscard]] const std::unordered_map<std::string, std::vector<Service*>>& ListSignalSubscribers() const { return _signalSubscribers; }
+
+        ~ServiceManager();
+
+    private:
+        std::map<std::type_index, Service*> _services;
+        std::vector<std::type_index> _order;
+        std::map<std::string, Service*> _interfaceServiceMap; // key: D-Bus interface
+        std::unordered_map<std::string, std::vector<Service*>> _signalSubscribers; // key: interface.member (e.g. "org.freedesktop.systemd1.Manager.JobRemoved")
+        std::unordered_map<std::string, std::vector<std::function<void()>>> _runBeforeCleanup;
+
+        Connection* _conn = nullptr;
+        bool _dbusInitialized = false;
+    };
+}

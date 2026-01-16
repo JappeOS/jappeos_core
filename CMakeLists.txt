@@ -2,23 +2,12 @@ cmake_minimum_required(VERSION 3.31)
 project(jappeos_core)
 
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -rdynamic -g -O0 -march=x86-64") # TODO
 
 find_package(PkgConfig REQUIRED)
 
-# Use pkg-config to find dbus-1
 pkg_check_modules(DBUS REQUIRED dbus-1)
-
-# Find PAM
 pkg_check_modules(PAM REQUIRED pam)
-
-# Add include directories
-include_directories(
-        ${DBUS_INCLUDE_DIRS}
-        ${DBUS_INCLUDE_DIRS}/../dbus-1.0    # Handles /usr/include/dbus-1.0
-        ${DBUS_LIBDIR}/dbus-1.0/include     # Handles /usr/lib/dbus-1.0/include
-        ${PAM_INCLUDE_DIRS}
-)
+pkg_check_modules(LIBNM REQUIRED libnm)
 
 # Add source files
 add_executable(jappeos_core src/main.cpp
@@ -45,12 +34,51 @@ add_executable(jappeos_core src/main.cpp
         src/services/power_manager/power_manager_service.h
         src/utils/dbus_utils.h
         src/services/account_manager/account_manager_service.cpp
-        src/services/account_manager/account_manager_service.h)
+        src/services/account_manager/account_manager_service.h
+        src/services/network_manager/network_manager_service.cpp
+        src/services/network_manager/network_manager_service.h
+        src/dbus/dbus_wrapper.h
+        src/dbus/dbus_wrapper.cpp
+        src/services/network_manager/network_device.h
+        src/services/network_manager/network_access_point.h
+        src/services/network_manager/network_device.cpp
+        src/services/network_manager/network_access_point.cpp
+        src/services/network_manager/network_connection.cpp
+        src/services/network_manager/network_connection.h)
 
-# Link dbus and PAM
-target_link_libraries(jappeos_core ${DBUS_LIBRARIES})
-target_link_libraries(jappeos_core ${PAM_LIBRARIES})
+# Add include directories
+target_include_directories(jappeos_core PRIVATE
+        ${DBUS_INCLUDE_DIRS}
+        ${DBUS_INCLUDE_DIRS}/../dbus-1.0
+        ${DBUS_LIBDIR}/dbus-1.0/include
+        ${PAM_INCLUDE_DIRS}
+        ${LIBNM_INCLUDE_DIRS}
+)
 
-# Silence pkg-config warnings
-add_definitions(${DBUS_CFLAGS_OTHER})
-add_definitions(${PAM_CFLAGS_OTHER})
+target_compile_options(jappeos_core PRIVATE
+        -march=x86-64
+        -mtune=generic
+        -fno-lto
+        -mno-avx
+        -mno-avx2
+        -mno-fma
+        -mno-bmi
+        -mno-bmi2
+        -mno-sse4.1
+        -mno-sse4.2
+        $<$<CONFIG:Debug>:-O0 -g>
+        $<$<CONFIG:Release>:-O2 -g -fno-omit-frame-pointer>
+        ${DBUS_CFLAGS_OTHER}
+        ${PAM_CFLAGS_OTHER}
+        ${LIBNM_CFLAGS_OTHER}
+)
+
+target_link_options(jappeos_core PRIVATE
+        $<$<CONFIG:Debug>:-rdynamic>
+)
+
+target_link_libraries(jappeos_core PRIVATE
+        ${DBUS_LIBRARIES}
+        ${PAM_LIBRARIES}
+        ${LIBNM_LIBRARIES}
+)
