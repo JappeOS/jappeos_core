@@ -201,7 +201,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         controlFd = -1;
 
         // --- 7) logind session ---
-        std::this_thread::sleep_for(std::chrono::milliseconds(300)); // TODO: Remove sleep and wait for UI properly
+        if (USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY) std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // TODO: Remove sleep and wait for UI properly
         if (!ActivateLogindSession(sessionId, seat))
         {
             logger->Warn("Failed to activate logind session: " + sessionId);
@@ -566,7 +566,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         logger->Info("Created session " + sessionId + " for user " + username);
 
         // --- 9) logind session ---
-        std::this_thread::sleep_for(std::chrono::milliseconds(300)); // TODO: Remove sleep and wait for UI properly
+        if (USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY) std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // TODO: Remove sleep and wait for UI properly
         if (!ActivateLogindSession(sessionId, seat))
         {
             logger->Warn("Failed to activate logind session: " + sessionId);

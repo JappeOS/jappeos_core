@@ -47,6 +47,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         [[nodiscard]] bool IsPrivilegedClientProcess(pid_t pid, bool allowChildProcesses = false) const;
 
     public:
+        const bool USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY = false; // TODO
         const char* PAM_GREETER_SERVICE = "jappeos-greeter";
         const char* PAM_LOGIN_SERVICE = "jappeos-login";
         const char* JOS_DESKTOP_BINARY = "/jappeos/desktop/desktop";
