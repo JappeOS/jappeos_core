@@ -1838,7 +1838,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
              _conn(conn),
              _iface(iface)
         {
-            iface.RegisterProperty<T>(name, [this] { return Get(); }, [this](const T& v) { Set(v); });
+            iface.RegisterProperty<T>(_name, [this] { return Get(); }, [this](const T& v) { Set(v); });
         }
 
         /**
