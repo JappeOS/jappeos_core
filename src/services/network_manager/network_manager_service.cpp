@@ -23,15 +23,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             "NameOwnerChanged",
             [&](const Message& msg)
             {
-                const auto args = msg.GetArgs<std::string, std::string, std::string>();
-                const std::string name = std::get<0>(args);
-                const std::string oldOwner = std::get<1>(args);
-                const std::string newOwner = std::get<2>(args);
-
-                if (name == "org.freedesktop.NetworkManager" && !newOwner.empty())
-                {
-                    OnNetworkManagerAppeared();
-                }
+                return OnNameOwnerChanged(msg);
             }
         ));
 
@@ -72,6 +64,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         SharedPolicy(message);
         auto msg = Message::CreateMethodReturn(message);
         const auto list = ListDevices();
+        _serviceManager->Get<Logger::LoggerService>()->Debug("OnListDevices called, returning " + std::to_string(list.size()) + " devices");
         msg.SetArgs(list);
         msg.Send(*_conn);
     }
@@ -84,6 +77,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             "DeviceAdded"
         );
 
+        _serviceManager->Get<Logger::LoggerService>()->Debug("EmitDeviceAdded called: " + path.ToString());
+
         sig.SetArgs(path);
         sig.Send(*_conn);
     }
@@ -95,6 +90,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             GetBaseInterface(),
             "DeviceRemoved"
         );
+
+        _serviceManager->Get<Logger::LoggerService>()->Debug("EmitDeviceRemoved called: " + path.ToString());
 
         sig.SetArgs(path);
         sig.Send(*_conn);
@@ -118,17 +115,29 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     void NetworkManagerService::TryInitNetworkManager()
     {
+        _serviceManager->Get<Logger::LoggerService>()->Debug("TryInitNetworkManager called");
+        if (_nmClient)
+        {
+            g_object_unref(_nmClient);
+            _nmClient = nullptr;
+        }
+
         GError* error = nullptr;
         _nmClient = nm_client_new(nullptr, &error);
 
         if (!_nmClient)
         {
             // NM not ready yet
+            _serviceManager->Get<Logger::LoggerService>()->Debug("TryInitNetworkManager NM not ready yet");
+
+            if (error)
+                g_error_free(error);
             return;
         }
 
         DiscoverDevices();
         SubscribeToNmSignals();
+        _serviceManager->Get<Logger::LoggerService>()->Debug("TryInitNetworkManager done");
     }
 
     void NetworkManagerService::OnNetworkManagerAppeared()
@@ -167,7 +176,27 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     void NetworkManagerService::SubscribeToNmSignals()
     {
+        g_signal_connect(
+            _nmClient,
+            "device-added",
+            G_CALLBACK(+[] (NMClient* client, NMDevice* device, gpointer user_data)
+            {
+                auto* self = static_cast<NetworkManagerService*>(user_data);
+                self->AddDevice(device);
+            }),
+            this
+        );
 
+        g_signal_connect(
+            _nmClient,
+            "device-removed",
+            G_CALLBACK(+[] (NMClient* client, NMDevice* device, gpointer user_data)
+            {
+                auto* self = static_cast<NetworkManagerService*>(user_data);
+                self->RemoveDevice(device);
+            }),
+            this
+        );
     }
 
     void NetworkManagerService::AddDevice(NMDevice* nmDev)
@@ -180,6 +209,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
         ObjectPath path = GetBaseObjectPath().Child("Devices").Child(std::string(iface));
         std::unique_ptr<NetworkDevice> device;
+
+        if (_devices.contains(path))
+            return;
+
+        _serviceManager->Get<Logger::LoggerService>()->Debug("Add device: " + path.ToString());
 
         switch (nmType)
         {
@@ -207,6 +241,22 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
         _devices.emplace(path, std::move(device));
         EmitDeviceAdded(path);
+    }
+
+    void NetworkManagerService::RemoveDevice(NMDevice* nmDev)
+    {
+        const char* iface = nm_device_get_iface(nmDev);
+        if (!iface)
+            return;
+
+        const ObjectPath path = GetBaseObjectPath().Child("Devices").Child(iface);
+
+        const auto it = _devices.find(path);
+        if (it == _devices.end())
+            return;
+
+        EmitDeviceRemoved(path);
+        _devices.erase(it);
     }
 
 }

@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "network_device_def.h"
+
 namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 {
 
@@ -26,10 +28,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                                  _iface(_object.CreateInterface(_interfaceName)),
                                  _id              (_conn, _iface, "Id", ""),
                                  _type            (_conn, _iface, "Type", ""),
-                                 _state           (_conn, _iface, "State", ""),
+                                 _state           (_conn, _iface, "State", NETWORK_DEVICE_STATE_DISCONNECTED),
                                  _hwAddress       (_conn, _iface, "HwAddress", ""),
                                  _managed         (_conn, _iface, "Managed", false),
-                                 _activeConnection(_conn, _iface, "ActiveConnection", "")
+                                 _activeConnection(_conn, _iface, "ActiveConnection", ObjectPath())
     {}
 
     // NetworkWifiDevice
@@ -45,12 +47,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         _iface.RegisterMethod("Scan",       [&](const auto &m) { OnScan(m); });
         _iface.RegisterMethod("Connect",    [&](const auto &m) { OnConnect(m); });
         _iface.RegisterMethod("Disconnect", [&](const auto &m) { OnDisconnect(m); });
-        _iface.RegisterProperty<std::vector<std::string>>(
+        _iface.RegisterProperty<std::vector<ObjectPath>>(
             "AccessPoints",
             [this]
             {
                 auto ks = std::views::keys(_accessPoints);
-                std::vector<std::string> keys{ks.begin(), ks.end()};
+                std::vector<ObjectPath> keys{ks.begin(), ks.end()};
                 return keys;
             }
         );

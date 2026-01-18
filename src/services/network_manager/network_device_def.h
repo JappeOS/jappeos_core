@@ -1,0 +1,3 @@
+#define NETWORK_DEVICE_STATE_CONNECTED "connected"
+#define NETWORK_DEVICE_STATE_CONNECTING "connecting"
+#define NETWORK_DEVICE_STATE_DISCONNECTED "disconnected"

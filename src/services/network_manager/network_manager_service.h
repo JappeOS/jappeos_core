@@ -1,5 +1,7 @@
 #pragma once
 #include <NetworkManager.h>
+
+#include "network_device_def.h"
 #include "../service.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
@@ -36,6 +38,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void DiscoverDevices();
         void SubscribeToNmSignals();
         void AddDevice(NMDevice* nmDev);
+        void RemoveDevice(NMDevice* nmDev);
 
     private:
         static std::string DeviceTypeToString(NMDeviceType t)
@@ -52,13 +55,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         {
             switch (s)
             {
-                case NM_DEVICE_STATE_ACTIVATED: return "connected";
+                case NM_DEVICE_STATE_ACTIVATED: return NETWORK_DEVICE_STATE_CONNECTED;
                 case NM_DEVICE_STATE_PREPARE:
                 case NM_DEVICE_STATE_CONFIG:
                 case NM_DEVICE_STATE_NEED_AUTH:
-                    return "connecting";
+                    return NETWORK_DEVICE_STATE_CONNECTING;
                 default:
-                    return "disconnected";
+                    return NETWORK_DEVICE_STATE_DISCONNECTED;
             }
         }
     };

@@ -18,7 +18,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         [[nodiscard]] std::string GetState() const { return _state.Get(); }
         [[nodiscard]] std::string GetHwAddress() const { return _hwAddress.Get(); }
         [[nodiscard]] bool GetManaged() const { return _managed.Get(); }
-        [[nodiscard]] std::string GetActiveConnection() const { return _activeConnection.Get(); }
+        [[nodiscard]] ObjectPath GetActiveConnection() const { return _activeConnection.Get(); }
 
         void SetState(const std::string& state);
 
@@ -42,7 +42,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         Prop<std::string> _state;
         Prop<std::string> _hwAddress;
         Prop<bool> _managed;
-        Prop<std::string> _activeConnection;
+        Prop<ObjectPath> _activeConnection;
     };
 
     class NetworkWifiDevice : public NetworkDevice
