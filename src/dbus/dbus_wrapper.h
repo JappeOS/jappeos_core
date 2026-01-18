@@ -1,3 +1,19 @@
+//  jappeos_core, Core system management daemon for JappeOS.
+//  Copyright (C) 2026  Jappe02
+//
+//  This program is free software: you can redistribute it and/or modify
+//  it under the terms of the GNU Affero General Public License as
+//  published by the Free Software Foundation, either version 3 of the
+//  License, or (at your option) any later version.
+//
+//  This program is distributed in the hope that it will be useful,
+//  but WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//  GNU Affero General Public License for more details.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 #pragma once
 #include <any>
 #include <cstdint>
@@ -14,6 +30,7 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore
 {
+    struct DBusVariant;
 
 #define DBUS_DEFAULT_SAFE_TIMEOUT 5000
 
@@ -161,8 +178,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
     template<typename T>
     struct DBusSignatureTraits
     {
-        static_assert(alwaysFalse<T>,
-                      "Unsupported D-Bus type");
+        static_assert(alwaysFalse<T>, "Unsupported D-Bus type");
     };
 
     template<>
@@ -201,11 +217,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
         static const char* get() { return "o"; }
     };
 
-    template<>
+    /*template<>
     struct DBusSignatureTraits<std::any>
     {
         static const char* get() { return "v"; }
-    };
+    };*/
 
     template<typename T>
     struct DBusSignatureTraits<std::vector<T>>
@@ -249,6 +265,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
         }
     };
 
+    template<>
+    struct DBusSignatureTraits<DBusVariant>
+    {
+        static const char* get() { return "v"; }
+    };
+
     template<typename T>
     const char* DBusGetSignature()
     {
@@ -256,6 +278,24 @@ namespace JappeStudios::JappeOS::JappeOSCore
     }
 
 #pragma endregion
+
+    /**
+     * @brief Represents a D-Bus variant. Contains the signature and value.
+     */
+    struct DBusVariant
+    {
+        std::string signature;
+        std::any value;
+
+        template<typename T>
+        static DBusVariant make(T&& v)
+        {
+            return {
+                DBusGetSignature<std::decay_t<T>>(),
+                std::forward<T>(v)
+            };
+        }
+    };
 
     // ========== SET TRAITS ==========
 #pragma region SetTraits
@@ -376,7 +416,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         }
     };
 
-    template<>
+    /*template<>
     struct DBusSetTraits<std::any>
     {
         static constexpr int type = DBUS_TYPE_VARIANT;
@@ -391,11 +431,35 @@ namespace JappeStudios::JappeOS::JappeOSCore
                     &it, type, "i", &sub);
                 DBusSetTraits<int32_t>::append(sub, std::any_cast<int32_t>(a));
             }
+            else if (a.type() == typeid(uint32_t))
+            {
+                dbus_message_iter_open_container(
+                    &it, type, "u", &sub);
+                DBusSetTraits<uint32_t>::append(sub, std::any_cast<uint32_t>(a));
+            }
+            else if (a.type() == typeid(bool))
+            {
+                dbus_message_iter_open_container(
+                    &it, type, "b", &sub);
+                DBusSetTraits<bool>::append(sub, std::any_cast<bool>(a));
+            }
+            else if (a.type() == typeid(double))
+            {
+                dbus_message_iter_open_container(
+                    &it, type, "d", &sub);
+                DBusSetTraits<double>::append(sub, std::any_cast<double>(a));
+            }
             else if (a.type() == typeid(std::string))
             {
                 dbus_message_iter_open_container(
                     &it, type, "s", &sub);
                 DBusSetTraits<std::string>::append(sub, std::any_cast<std::string>(a));
+            }
+            else if (a.type() == typeid(ObjectPath))
+            {
+                dbus_message_iter_open_container(
+                    &it, type, "o", &sub);
+                DBusSetTraits<ObjectPath>::append(sub, std::any_cast<ObjectPath>(a));
             }
             else
             {
@@ -404,7 +468,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
             dbus_message_iter_close_container(&it, &sub);
         }
-    };
+    };*/
 
     template<typename... Ts>
     struct DBusSetTraits<std::tuple<Ts...>>
@@ -422,6 +486,58 @@ namespace JappeStudios::JappeOS::JappeOSCore
             }, t);
 
             dbus_message_iter_close_container(&it, &sub);
+        }
+    };
+
+    template<>
+    struct DBusSetTraits<DBusVariant>
+    {
+        static constexpr int type = DBUS_TYPE_VARIANT;
+
+        static void append(DBusMessageIter& it, const DBusVariant& v)
+        {
+            DBusMessageIter sub;
+
+            dbus_message_iter_open_container(
+                &it,
+                DBUS_TYPE_VARIANT,
+                v.signature.c_str(),
+                &sub
+            );
+
+            appendBySignature(sub, v.signature, v.value);
+
+            dbus_message_iter_close_container(&it, &sub);
+        }
+
+    private:
+        static void appendBySignature(
+            DBusMessageIter& it,
+            const std::string& sig,
+            const std::any& val)
+        {
+            if (sig == "i")
+                DBusSetTraits<int32_t>::append(it, std::any_cast<int32_t>(val));
+            else if (sig == "u")
+                DBusSetTraits<uint32_t>::append(it, std::any_cast<uint32_t>(val));
+            else if (sig == "b")
+                DBusSetTraits<bool>::append(it, std::any_cast<bool>(val));
+            else if (sig == "d")
+                DBusSetTraits<double>::append(it, std::any_cast<double>(val));
+            else if (sig == "s")
+                DBusSetTraits<std::string>::append(it, std::any_cast<std::string>(val));
+            else if (sig == "o")
+                DBusSetTraits<ObjectPath>::append(it, std::any_cast<ObjectPath>(val));
+            else if (sig.starts_with("a"))
+            {
+                throw DBusException(DBUS_ERROR_INVALID_ARGS,
+                    "Container variants must be deserialized with explicit type");
+            }
+            else
+            {
+                throw DBusException(DBUS_ERROR_INVALID_ARGS,
+                    "Unsupported variant signature");
+            }
         }
     };
 
@@ -585,7 +701,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         }
     };
 
-    template<>
+    /*template<>
     struct DBusGetTraits<std::any>
     {
         static constexpr int type = DBUS_TYPE_VARIANT;
@@ -600,15 +716,23 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
             if (t == DBUS_TYPE_INT32)
                 out = DBusGetTraits<int32_t>::get(sub);
+            else if (t == DBUS_TYPE_UINT32)
+                out = DBusGetTraits<uint32_t>::get(sub);
+            else if (t == DBUS_TYPE_BOOLEAN)
+                out = DBusGetTraits<bool>::get(sub);
+            else if (t == DBUS_TYPE_DOUBLE)
+                out = DBusGetTraits<double>::get(sub);
             else if (t == DBUS_TYPE_STRING)
                 out = DBusGetTraits<std::string>::get(sub);
+            else if (t == DBUS_TYPE_OBJECT_PATH)
+                out = DBusGetTraits<ObjectPath>::get(sub);
             else
                 throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unsupported variant");
 
             dbus_message_iter_next(&it);
             return out;
         }
-    };
+    };*/
 
     template<typename... Ts>
     struct DBusGetTraits<std::tuple<Ts...>>
@@ -632,6 +756,53 @@ namespace JappeStudios::JappeOS::JappeOSCore
         static std::tuple<Args...> getTupleElements(DBusMessageIter& it)
         {
             return std::tuple<Args...>{DBusGetTraits<Args>::get(it)...};
+        }
+    };
+
+    template<>
+    struct DBusGetTraits<DBusVariant>
+    {
+        static constexpr int type = DBUS_TYPE_VARIANT;
+
+        static DBusVariant get(DBusMessageIter& it)
+        {
+            DBusMessageIter sub;
+            dbus_message_iter_recurse(&it, &sub);
+
+            char* sig = dbus_message_iter_get_signature(&sub);
+
+            DBusVariant out;
+            out.signature = sig;
+
+            dbus_free(sig);
+
+            switch (dbus_message_iter_get_arg_type(&sub))
+            {
+                case DBUS_TYPE_INT32:
+                    out.value = DBusGetTraits<int32_t>::get(sub);
+                    break;
+                case DBUS_TYPE_UINT32:
+                    out.value = DBusGetTraits<uint32_t>::get(sub);
+                    break;
+                case DBUS_TYPE_BOOLEAN:
+                    out.value = DBusGetTraits<bool>::get(sub);
+                    break;
+                case DBUS_TYPE_DOUBLE:
+                    out.value = DBusGetTraits<double>::get(sub);
+                    break;
+                case DBUS_TYPE_STRING:
+                    out.value = DBusGetTraits<std::string>::get(sub);
+                    break;
+                case DBUS_TYPE_OBJECT_PATH:
+                    out.value = DBusGetTraits<ObjectPath>::get(sub);
+                    break;
+                default:
+                    throw DBusException(DBUS_ERROR_INVALID_ARGS,
+                        "Unsupported variant payload");
+            }
+
+            dbus_message_iter_next(&it);
+            return out;
         }
     };
 
@@ -747,8 +918,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
      */
     class Connection
     {
-        friend class SignalSubscription;
-
     public:
         /**
          * @brief Creates a connection to a D-Bus bus.
@@ -787,6 +956,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * The object will be added to the connection's registry and will receive
          * all messages directed to its path.
          *
+         * This method is called internally by Object::Object().
+         * Users should not call this method directly.
+         *
          * @param object Pointer to the object to register (must remain valid)
          * @throws std::logic_error if an object with the same path already exists
          */
@@ -794,6 +966,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         /**
          * @brief Unregisters an object by path.
+         *
+         * This method is called internally by Object::~Object().
+         * Users should not call this method directly.
+         *
          * @param object The object path to unregister
          */
         void Unregister(const ObjectPath& object);
@@ -918,6 +1094,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
                 return h;
             }
         };
+
+        friend class SignalSubscription;
 
     private:
         DBusConnection* _conn;
@@ -1173,7 +1351,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
             const int actual = dbus_message_iter_get_arg_type(&it);
 
             // Type validation for simple types
-            if constexpr (requires { Traits::type; }) {
+            if constexpr (requires { Traits::type; })
+            {
                 if (actual != Traits::type)
                 {
                     throw DBusException(
@@ -1254,7 +1433,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         {
             try
             {
-                return fn(conn, msg);
+                return fn();
             }
             catch (DBusException& e)
             {
@@ -1312,6 +1491,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
      *       not as direct method calls.
      * @note This class is not thread-safe. Ensure all operations occur from a
      *       single thread or provide external synchronization.
+     * @note The Prop<T> class is recommended for properties, instead of raw lambdas.
      */
     class Interface
     {
@@ -1426,7 +1606,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * int volume = 50;
          * iface.RegisterProperty<int32_t>(
          *     "Volume",
-         *     [&]() { return volume; },           // getter
+         *     [&]() { return volume; },             // getter
          *     [&](const int32_t& v) { volume = v; } // setter
          * );
          * @endcode
@@ -1435,18 +1615,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @code
          * iface.RegisterProperty<std::string>(
          *     "Version",
-         *     []() { return std::string("1.0.0"); }, // getter only
-         *     {}                                       // no setter
-         * );
-         * @endcode
-         *
-         * Example - Write-only property:
-         * @code
-         * std::string lastCommand;
-         * iface.RegisterProperty<std::string>(
-         *     "Command",
-         *     {},                                      // no getter
-         *     [&](const std::string& cmd) { lastCommand = cmd; } // setter only
+         *     []() { return std::string("1.0.0"); } // getter only, no setter
          * );
          * @endcode
          *
@@ -1469,47 +1638,69 @@ namespace JappeStudios::JappeOS::JappeOSCore
         template<typename T, typename Getter, typename Setter = std::nullptr_t>
         void RegisterProperty(std::string name, Getter getter, Setter setter = nullptr)
         {
-            static_assert(std::is_invocable_r_v<T, Getter>, "Getter must be callable and return T");
+            static_assert(std::is_invocable_r_v<T, Getter>,
+                          "Getter must be callable and return T");
 
             if constexpr (!std::is_same_v<Setter, std::nullptr_t>)
             {
-                static_assert(std::is_invocable_r_v<void, Setter, const T&>, "Setter must be callable with (const T&)");
+                static_assert(std::is_invocable_r_v<void, Setter, const T&>,
+                              "Setter must be callable with (const T&)");
             }
 
             std::function<T()> getterFn = std::move(getter);
             std::function<void(const T&)> setterFn;
 
             if constexpr (!std::is_same_v<Setter, std::nullptr_t>)
-            {
                 setterFn = std::move(setter);
-            }
 
             Property prop;
             prop.name = name;
+
+            // property signature is the inner type
             prop.signature = DBusSignatureTraits<T>::get();
 
+            // GET
             if (getterFn)
             {
                 prop.getter = [getterFn = std::move(getterFn)](Message& reply)
                 {
                     T value = getterFn();
-                    reply.SetArgs(value);
+
+                    // Properties.Get MUST return a variant
+                    const DBusVariant v = DBusVariant::make(std::move(value));
+
+                    reply.SetArgs(v);
                 };
             }
 
+            // SET
             if (setterFn)
             {
-                prop.setter = [setterFn = std::move(setterFn)](const Message& msg)
+                prop.setter = [setterFn = std::move(setterFn), expectedSig = prop.signature](const Message& msg)
                 {
-                    const auto args = msg.GetArgs<std::string, std::string, std::any>();
-                    const std::any& raw = std::get<2>(args);
+                    // Set(interface, property, variant)
+                    const auto args =
+                        msg.GetArgs<std::string, std::string, DBusVariant>();
+
+                    const DBusVariant& v = std::get<2>(args);
+
+                    // Enforce declared property signature
+                    if (v.signature != expectedSig)
+                    {
+                        throw DBusException(
+                            DBUS_ERROR_INVALID_ARGS,
+                            "Invalid variant signature for property");
+                    }
+
                     try
                     {
-                        setterFn(std::any_cast<const T&>(raw));
+                        setterFn(std::any_cast<const T&>(v.value));
                     }
                     catch (const std::bad_any_cast&)
                     {
-                        throw std::runtime_error("Invalid DBus type for property");
+                        throw DBusException(
+                            DBUS_ERROR_INVALID_ARGS,
+                            "Invalid variant value for property");
                     }
                 };
             }
@@ -1642,8 +1833,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
              Interface& iface,
              std::string name,
              T initial) :
-             _value(initial),
-             _name(name),
+             _value(std::move(initial)),
+             _name(std::move(name)),
              _conn(conn),
              _iface(iface)
         {
@@ -1717,8 +1908,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
             sig.SetArgs(
                 _iface.GetName().ToString(),
-                std::map<std::string, std::any>{
-                    { _name, _value }
+                std::map<std::string, DBusVariant>{
+                    { _name, DBusVariant::make(_value) }
                 },
                 std::vector<std::string>{}
             );
@@ -1726,5 +1917,4 @@ namespace JappeStudios::JappeOS::JappeOSCore
             sig.Send(_conn);
         }
     };
-
 }

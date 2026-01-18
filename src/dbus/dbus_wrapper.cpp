@@ -1,3 +1,19 @@
+//  jappeos_core, Core system management daemon for JappeOS.
+//  Copyright (C) 2026  Jappe02
+//
+//  This program is free software: you can redistribute it and/or modify
+//  it under the terms of the GNU Affero General Public License as
+//  published by the Free Software Foundation, either version 3 of the
+//  License, or (at your option) any later version.
+//
+//  This program is distributed in the hope that it will be useful,
+//  but WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//  GNU Affero General Public License for more details.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 #include "dbus_wrapper.h"
 
 #include <format>
@@ -144,8 +160,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
             throw DBusException(DBUS_ERROR_NO_MEMORY, "Failed to connect to D-Bus bus.");
     }
 
-    /// Creates a connection object from a raw `DBusConnection*` object. Hands off ownership of the `DBusConnection*`
-    /// to this `Connection` instance.
     Connection::Connection(DBusConnection* conn)
     {
         if (!conn)
@@ -321,7 +335,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
         if (!iface.has_value())
             return false;
 
-        const SignalKey key{
+        const SignalKey key
+        {
             iface.value(),
             msg.GetMember(),
             msg.GetPath()
@@ -377,7 +392,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
             return;
 
         auto& list = it->second;
-        list[_index] = nullptr; // tombstone
+        list[_index] = nullptr;
 
         if (std::all_of(list.begin(), list.end(),
                         [](auto& f){ return !f; }))
@@ -396,24 +411,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         other._active = false;
     }
-
-    /*SignalSubscription& SignalSubscription::operator=(SignalSubscription&& other) noexcept
-    {
-        if (this != &other)
-        {
-            if (_active)
-                RemoveMatchRule();
-
-            _conn   = other._conn;
-            _key    = std::move(other._key);
-            _index  = other._index;
-            _match  = std::move(other._match);
-            _active = other._active;
-
-            other._active = false;
-        }
-        return *this;
-    }*/
 
     void SignalSubscription::AddMatchRule() const
     {
@@ -468,7 +465,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
             conn.GetRawConnection(),
             _msg,
             timeoutMilliseconds < 1 ? DBUS_DEFAULT_SAFE_TIMEOUT : timeoutMilliseconds,
-            &err);
+            &err
+        );
 
         if (dbus_error_is_set(&err))
         {
@@ -619,9 +617,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         if (it == _interfaces.end())
             return false;
 
-        return DispatchExceptionHandler(_connection, msg, [&](const Connection& conn, const Message& msg)
+        return DispatchExceptionHandler(_connection, msg, [&]
         {
-            return it->second->Dispatch(conn, msg);
+            return it->second->Dispatch(_connection, msg);
         });
     }
 
@@ -642,16 +640,16 @@ namespace JappeStudios::JappeOS::JappeOSCore
             if (iface == _interfaces.end())
                 throw DBusException(DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
 
-            return DispatchExceptionHandler(_connection, msg, [&](const Connection& conn, const Message& msg)
+            return DispatchExceptionHandler(_connection, msg, [&]
             {
-                iface->second->HandleGetProperty(conn, msg, targetInterface, property);
+                iface->second->HandleGetProperty(_connection, msg, targetInterface, property);
                 return true;
             });
         }
 
         if (msg.GetMember() == "Set")
         {
-            const auto args = msg.GetArgs<std::string, std::string, std::any>();
+            const auto args = msg.GetArgs<std::string, std::string, DBusVariant>();
             targetInterface = InterfaceName(std::get<0>(args));
             property        = std::get<1>(args);
 
@@ -659,9 +657,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
             if (iface == _interfaces.end())
                 throw DBusException(DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
 
-            return DispatchExceptionHandler(_connection, msg, [&](const Connection& conn, const Message& msg)
+            return DispatchExceptionHandler(_connection, msg, [&]
             {
-                iface->second->HandleSetProperty(conn, msg, targetInterface, property);
+                iface->second->HandleSetProperty(_connection, msg, targetInterface, property);
                 return true;
             });
         }
@@ -675,9 +673,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
             if (iface == _interfaces.end())
                 throw DBusException(DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
 
-            return DispatchExceptionHandler(_connection, msg, [&](const Connection& conn, const Message& msg)
+            return DispatchExceptionHandler(_connection, msg, [&]
             {
-                iface->second->HandleGetAllProperties(conn, msg, targetInterface);
+                iface->second->HandleGetAllProperties(_connection, msg, targetInterface);
                 return true;
             });
         }
@@ -739,24 +737,35 @@ namespace JappeStudios::JappeOS::JappeOSCore
         Message::CreateMethodReturn(msg).Send(conn);
     }
 
-    void Interface::HandleGetAllProperties(const Connection& conn, const Message& msg, const InterfaceName& iface)
+    void Interface::HandleGetAllProperties(const Connection& conn,
+                                           const Message& msg,
+                                           const InterfaceName& iface)
     {
         if (iface != _name)
-            throw DBusException(DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
+            throw DBusException(
+                DBUS_ERROR_UNKNOWN_INTERFACE,
+                "Unknown interface"
+            );
 
-        std::map<std::string, std::any> values;
+        std::map<std::string, DBusVariant> values;
 
         for (auto& [propName, prop] : _properties)
         {
+            if (!prop.getter)
+                continue;
+
             auto temp = Message::CreateMethodReturn(msg);
             prop.getter(temp);
-            values[propName] = std::get<0>(temp.GetArgs<std::any>());
+
+            auto args = temp.GetArgs<DBusVariant>();
+            values.emplace(propName, std::get<0>(args));
         }
 
         auto reply = Message::CreateMethodReturn(msg);
         reply.SetArgs(values);
         reply.Send(conn);
     }
+
 
     InterfaceName Interface::GetName() const { return _name; }
 
