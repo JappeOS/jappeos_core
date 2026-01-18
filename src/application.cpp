@@ -5,6 +5,7 @@
 #include "services/session_manager/session_manager_service.h"
 #include "services/watchdog/watchdog_service.h"
 #include "services/bsod/bsod_service.h"
+#include "services/network_manager/network_manager_service.h"
 #include "services/power_manager/power_manager_service.h"
 #include "utils/jos_exception.h"
 
@@ -41,14 +42,14 @@ namespace JappeStudios::JappeOS::JappeOSCore
                     switch (s_signalCaught)
                     {
                         case SIGABRT: throw Utils::JosException("SIGABRT", "");
-                        case SIGBUS: throw Utils::JosException("SIGBUS", "");
-                        case SIGFPE: throw Utils::JosException("SIGFPE", "");
-                        case SIGHUP: throw Utils::JosException("SIGHUP", "");
-                        case SIGILL: throw Utils::JosException("SIGILL", "");
+                        case SIGBUS:  throw Utils::JosException("SIGBUS", "");
+                        case SIGFPE:  throw Utils::JosException("SIGFPE", "");
+                        case SIGHUP:  throw Utils::JosException("SIGHUP", "");
+                        case SIGILL:  throw Utils::JosException("SIGILL", "");
                         case SIGPIPE: throw Utils::JosException("SIGPIPE", "");
                         case SIGQUIT: throw Utils::JosException("SIGQUIT", "");
                         case SIGSEGV: throw Utils::JosException("SIGSEGV", "");
-                        case SIGSYS: throw Utils::JosException("SIGSYS", "");
+                        case SIGSYS:  throw Utils::JosException("SIGSYS", "");
                         case SIGUSR1: throw Utils::JosException("SIGUSR1", "");
                         case SIGUSR2: throw Utils::JosException("SIGUSR2", "");
                         case SIGXCPU: throw Utils::JosException("SIGXCPU", "");
@@ -132,7 +133,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         //sigaction(SIGHUP, &sa, nullptr);
         //sigaction(SIGILL, &sa, nullptr);
         //sigaction(SIGPIPE, &sa, nullptr);
-        //sigaction(SIGQUIT, &sa, nullptr);
+        sigaction(SIGQUIT, &sa, nullptr);
         //sigaction(SIGSEGV, &sa, nullptr);
         //sigaction(SIGSYS, &sa, nullptr);
         //sigaction(SIGUSR1, &sa, nullptr);
@@ -183,6 +184,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         _serviceManager->Register<Services::SessionManager::SessionManagerService>();
         _serviceManager->Register<Services::AccountManager::AccountManagerService>();
         _serviceManager->Register<Services::PowerManager::PowerManagerService>();
+        _serviceManager->Register<Services::NetworkManager::NetworkManagerService>();
     }
 
     void Application::Update()
@@ -191,6 +193,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         static const auto logger = NULL_SAFE_CALL_RET(_serviceManager, Get<Services::Logger::LoggerService>());
 
+        // GLib support
+        while (g_main_context_iteration(nullptr, FALSE));
+
+        // Signals
         if (_fds[1].revents & POLLIN)
         {
             char buf[64];
@@ -201,6 +207,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
             return;
         }
 
+        // D-Bus messages
         if (_fds[0].revents & POLLIN)
         {
             while (_conn->ReadWrite(0))
@@ -209,8 +216,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
                 if (!msg.has_value() || _serviceManager == nullptr) break;
 
                 OnMessageHandlerPre();
-                HandleDBusMessageLegacy(logger, msg.value().GetRawMessage());
-                _conn->HandleMessage(msg.value());
+                if (!_conn->HandleMessage(msg.value()))
+                {
+                    HandleDBusMessageLegacy(logger, msg.value().GetRawMessage());
+                }
                 //_serviceManager->HandleMessage(msg.value());
                 OnMessageHandlerPost();
             }
