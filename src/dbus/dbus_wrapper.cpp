@@ -90,7 +90,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
     InterfaceName::InterfaceName(std::string name)
     {
         if (!IsValid(name))
-            throw std::invalid_argument("Invalid D-Bus InterfaceName");
+            throw std::invalid_argument("Invalid D-Bus InterfaceName: " + name);
 
         _name = std::move(name);
     }
@@ -627,14 +627,13 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     bool Object::DispatchProperties(const Message& msg)
     {
-        InterfaceName targetInterface{""};
         std::string property;
 
         if (msg.GetMember() == "Get")
         {
             const auto args = msg.GetArgs<std::string, std::string>();
-            targetInterface = InterfaceName(std::get<0>(args));
-            property        = std::get<1>(args);
+            const auto targetInterface = InterfaceName(std::get<0>(args));
+            property = std::get<1>(args);
 
             const auto iface = _interfaces.find(targetInterface);
             if (iface == _interfaces.end())
@@ -650,8 +649,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
         if (msg.GetMember() == "Set")
         {
             const auto args = msg.GetArgs<std::string, std::string, DBusVariant>();
-            targetInterface = InterfaceName(std::get<0>(args));
-            property        = std::get<1>(args);
+            const auto targetInterface = InterfaceName(std::get<0>(args));
+            property = std::get<1>(args);
 
             const auto iface = _interfaces.find(targetInterface);
             if (iface == _interfaces.end())
@@ -667,7 +666,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         if (msg.GetMember() == "GetAll")
         {
             const auto args = msg.GetArgs<std::string>();
-            targetInterface = InterfaceName(std::get<0>(args));
+            const auto targetInterface = InterfaceName(std::get<0>(args));
 
             const auto iface = _interfaces.find(targetInterface);
             if (iface == _interfaces.end())
