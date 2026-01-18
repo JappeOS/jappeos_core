@@ -22,9 +22,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                                  _conn(connection),
                                  _path(std::move(objectPath)),
                                  _object(_conn, _path),
-                                 _interfaceName(source.GetBaseInterface().Child(childIfaceName.empty()
-                                                                                ? "Device"
-                                                                                : childIfaceName)),
+                                 _interfaceName(childIfaceName.empty() ? source.GetBaseInterface().Child("Device") : source.GetBaseInterface().Child("Device").Child(childIfaceName)),
                                  _iface(_object.CreateInterface(_interfaceName)),
                                  _id              (_conn, _iface, "Id", ""),
                                  _type            (_conn, _iface, "Type", ""),
@@ -42,7 +40,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                                          NetworkDevice(source,
                                                        connection,
                                                        std::move(objectPath),
-                                                       "Device.WiFi")
+                                                       "WiFi")
     {
         _iface.RegisterMethod("Scan",       [&](const auto &m) { OnScan(m); });
         _iface.RegisterMethod("Connect",    [&](const auto &m) { OnConnect(m); });
