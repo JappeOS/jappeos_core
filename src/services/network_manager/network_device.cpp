@@ -22,7 +22,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                                  _conn(connection),
                                  _path(std::move(objectPath)),
                                  _object(_conn, _path),
-                                 _interfaceName(childIfaceName.empty() ? source.GetBaseInterface().Child("Device") : source.GetBaseInterface().Child("Device").Child(childIfaceName)),
+                                 _interfaceName(childIfaceName.empty()
+                                     ? source.GetBaseInterface().Child("Device")
+                                     : source.GetBaseInterface().Child("Device").Child(childIfaceName)),
                                  _iface(_object.CreateInterface(_interfaceName)),
                                  _id              (_conn, _iface, "Id", ""),
                                  _type            (_conn, _iface, "Type", ""),
