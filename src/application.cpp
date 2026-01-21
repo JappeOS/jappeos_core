@@ -22,7 +22,6 @@
 #include "services/account_manager/account_manager_service.h"
 #include "services/session_manager/session_manager_service.h"
 #include "services/watchdog/watchdog_service.h"
-#include "services/bsod/bsod_service.h"
 #include "services/network_manager/network_manager_service.h"
 #include "services/power_manager/power_manager_service.h"
 #include "utils/jos_exception.h"
@@ -197,7 +196,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     void Application::InitServices() const
     {
-        _serviceManager->Register<Services::Bsod::BsodService>();
         _serviceManager->Register<Services::Watchdog::WatchdogService>();
         _serviceManager->Register<Services::SessionManager::SessionManagerService>();
         _serviceManager->Register<Services::AccountManager::AccountManagerService>();
@@ -272,7 +270,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
         }
     }
 
-    void Application::HandleMethodCallLegacy(Services::Logger::LoggerService* logger, Services::Service* svc, DBusMessage* msg, const char* interface) const
+    void Application::HandleMethodCallLegacy(Services::Logger::LoggerService* logger,
+                                             Services::Service* svc,
+                                             DBusMessage* msg,
+                                             const char* interface) const
     {
         if (!msg)
         {
@@ -309,7 +310,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     void Application::FailFastFatalError(const std::string& errCode, const std::string& message, const std::string& stack) const
     {
-        const auto bsod = NULL_SAFE_CALL_RET(_serviceManager, Get<Services::Bsod::BsodService>());
         const auto logger = NULL_SAFE_CALL_RET(_serviceManager, Get<Services::Logger::LoggerService>());
 
         auto newErrCode = errCode;
@@ -319,21 +319,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
         const auto newStack = stack.empty() ? PrintStackTrace() : stack;
 
         NULL_SAFE_CALL(logger, Emerg("[Application::FailFastFatalError] FailFastFatalError called! ErrCode: " + newErrCode + ", Message: " + message + ", Stack: " + newStack + ". This indicates that a fatal system error has occurred."));
-        NULL_SAFE_CALL(logger, Info("[Application::FailFastFatalError] Trying to display BSOD."));
-
-        if (bsod == nullptr)
-        {
-            NULL_SAFE_CALL(logger, Err("[Application::FailFastFatalError] Failed to display BSOD! Service is not initialized!"));
-            return;
-        }
-
-        bsod->ShowBSODDangerousSync(
-            "A fatal error has occurred and the system needs to be reset!"
-            + (message.empty() ? "\n\n" + message : "Please check the system logs for more information.")
-            + (stack.empty() ? "\n\nStack: \n" + stack : "")
-            + (newErrCode.empty() ? "\n\nError: " + newErrCode : "ERROR_UNKNOWN")
-        );
-
         NULL_SAFE_CALL(logger, Crit("[Application::FailFastFatalError] Exiting immediately because of unrecoverable fatal error."));
         exit(EXIT_FAILURE);
     }
@@ -346,7 +331,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         void* addrlist[max_frames + 1];
 
         // Retrieve current stack addresses
-        int addrlen = backtrace(addrlist, sizeof(addrlist) / sizeof(void*));
+        const int addrlen = backtrace(addrlist, sizeof(addrlist) / sizeof(void*));
         if (addrlen == 0)
         {
             oss << "<empty, possibly corrupt>\n";
