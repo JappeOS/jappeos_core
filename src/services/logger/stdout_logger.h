@@ -41,20 +41,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
         explicit StdoutLogger(ServiceManager* serviceManager, Connection* conn);
         ~StdoutLogger() override;
 
-        void Emerg(const std::string &str) override;
-        void Alert(const std::string &str) override;
-        void Crit(const std::string &str) override;
-        void Err(const std::string &str) override;
-        void Warn(const std::string &str) override;
+        void Emerg (const std::string &str) override;
+        void Alert (const std::string &str) override;
+        void Crit  (const std::string &str) override;
+        void Err   (const std::string &str) override;
+        void Warn  (const std::string &str) override;
         void Notice(const std::string &str) override;
-        void Info(const std::string &str) override;
-        void Debug(const std::string &str) override;
+        void Info  (const std::string &str) override;
+        void Debug (const std::string &str) override;
 
     private:
-        std::atomic<bool> _done = false;
-        std::thread _loggerThread;
+        std::atomic<bool>       _done = false;
+        std::thread             _loggerThread;
         std::queue<std::string> _logQueue;
-        std::mutex _queueMutex;
+        std::mutex              _queueMutex;
         std::condition_variable _cv;
 
         void Log(const std::string& prefix, const std::string& str);

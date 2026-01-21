@@ -29,26 +29,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
     StdoutLogger::~StdoutLogger()
     {
         _done = true;
-        _cv.notify_one(); // Wake logger thread to exit
+        _cv.notify_one();
         if (_loggerThread.joinable())
-            _loggerThread.join(); // Wait for thread to finish
+            _loggerThread.join();
     }
 
-    void StdoutLogger::Emerg(const std::string &str) { Log(SD_EMERG, str); }
-
-    void StdoutLogger::Alert(const std::string &str) { Log(SD_ALERT, str); }
-
-    void StdoutLogger::Crit(const std::string &str) { Log(SD_CRIT, str); }
-
-    void StdoutLogger::Err(const std::string &str) { Log(SD_ERR, str); }
-
-    void StdoutLogger::Warn(const std::string &str) { Log(SD_WARNING, str); }
-
+    void StdoutLogger::Emerg (const std::string &str) { Log(SD_EMERG, str); }
+    void StdoutLogger::Alert (const std::string &str) { Log(SD_ALERT, str); }
+    void StdoutLogger::Crit  (const std::string &str) { Log(SD_CRIT, str); }
+    void StdoutLogger::Err   (const std::string &str) { Log(SD_ERR, str); }
+    void StdoutLogger::Warn  (const std::string &str) { Log(SD_WARNING, str); }
     void StdoutLogger::Notice(const std::string &str) { Log(SD_NOTICE, str); }
-
-    void StdoutLogger::Info(const std::string &str) { Log(SD_INFO, str); }
-
-    void StdoutLogger::Debug(const std::string &str) { Log(SD_DEBUG, str); }
+    void StdoutLogger::Info  (const std::string &str) { Log(SD_INFO, str); }
+    void StdoutLogger::Debug (const std::string &str) { Log(SD_DEBUG, str); }
 
     void StdoutLogger::Log(const std::string& prefix, const std::string& str)
     {
@@ -56,7 +49,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
             std::lock_guard<std::mutex> lock(_queueMutex);
             _logQueue.push(std::move(prefix + str));
         }
-        _cv.notify_one(); // Wake logger thread
+        _cv.notify_one();
     }
 
     void StdoutLogger::Process()
@@ -70,7 +63,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
             {
                 std::string msg = _logQueue.front();
                 _logQueue.pop();
-                lock.unlock();  // Unlock while writing to avoid blocking other threads
+                lock.unlock();
                 std::cout << msg << std::endl;
                 lock.lock();
             }
