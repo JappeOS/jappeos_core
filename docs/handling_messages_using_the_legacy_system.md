@@ -1,4 +1,8 @@
-# Service Message Handling Standard
+# Handling D-Bus messages using the legacy message handling system
+
+> [!WARNING]
+> This doc is about the old message handling system. The new `dbus_wrapper` should be used instead. 
+
 This file shows the right way to handle D-Bus signals and messages in a `jappeos_core` service.
 
 ## 1. The `HandleMethodCall` method
