@@ -26,12 +26,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
 
     // Service
 
-    Service::Service(ServiceManager* serviceManager, Connection* conn) : _serviceManager(serviceManager), _rawConn(conn->GetRawConnection()), _conn(conn)
-    {
+    Service::Service(ServiceManager* serviceManager, Connection* conn)
+        : _serviceManager(serviceManager), _rawConn(conn->GetRawConnection()), _conn(conn)
+    {}
 
-    }
-
-    void Service::SendErrorReplyAndLogLegacy(DBusConnection* conn, DBusMessage* msg, const std::string& errorName, const std::string& errorMsg)
+    void Service::SendErrorReplyAndLogLegacy(DBusConnection* conn,
+                                             DBusMessage* msg,
+                                             const std::string& errorName,
+                                             const std::string& errorMsg) const
     {
         DBusMessage* error = dbus_message_new_error(
             msg,
@@ -42,10 +44,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
         dbus_connection_flush(conn);
         dbus_message_unref(error);
         _serviceManager->Get<Logger::LoggerService>()->Notice(
-            std::format("SendErrorReply(service='{}', errorName='{}', errorMsg='{}')", GetName(), errorName, errorMsg));
+            std::format(
+                "SendErrorReply(service='{}', errorName='{}', errorMsg='{}')",
+                GetName(),
+                errorName,
+                errorMsg
+            )
+        );
     }
 
-    void Service::SendSuccessReplyAndLogLegacy(DBusConnection* conn, DBusMessage* msg, const std::string& message)
+    void Service::SendSuccessReplyAndLogLegacy(DBusConnection* conn,
+                                               DBusMessage* msg,
+                                               const std::string& message) const
     {
         DBusMessage* reply = dbus_message_new_method_return(msg);
         dbus_connection_send(conn, reply, nullptr);
@@ -56,7 +66,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
                              std::format("SendSuccessReply(service='{}', msg='{}')", GetName(), message));
     }
 
-    void Service::SubscribeToSignalLegacy(const std::string& signalName) { _serviceManager->SubscribeServiceToSignalLegacy(signalName, this); }
+    void Service::SubscribeToSignalLegacy(const std::string& signalName)
+        { _serviceManager->SubscribeServiceToSignalLegacy(signalName, this); }
 
     // ServiceManager
 
@@ -73,8 +84,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
                     {
                         for (const auto& fun : it->second)
                         {
-                            try { fun(); }
-                            catch (const std::exception& e) { NULL_SAFE_CALL(Get<Logger::LoggerService>(), Err(std::string("Pre-cleanup runnable failed for `") + svcIfaceName + "`: " + e.what())); }
+                            try
+                            {
+                                fun();
+                            }
+                            catch (const std::exception& e)
+                            {
+                                NULL_SAFE_CALL(
+                                    Get<Logger::LoggerService>(),
+                                    Err(std::string("Pre-cleanup runnable failed for `") + svcIfaceName + "`: "
+                                        + e.what())
+                                );
+                            }
                         }
                     }
 
@@ -82,7 +103,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
                 }
                 catch (const std::exception& e)
                 {
-                    NULL_SAFE_CALL(Get<Logger::LoggerService>(), Err(std::string("Cleanup failure: ") + e.what()));
+                    NULL_SAFE_CALL(
+                        Get<Logger::LoggerService>(),
+                        Err(std::string("Cleanup failure: ") + e.what())
+                    );
                 }
                 _services.erase(found);
             }
