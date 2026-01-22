@@ -610,7 +610,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
             return false;
 
         if (iface.value().ToString() == "org.freedesktop.DBus.Properties")
-            return DispatchProperties(msg);
+        {
+            return DispatchExceptionHandler(_connection, msg, [&]
+            {
+                return DispatchProperties(msg);
+            });
+        }
 
         /*if (iface == "org.freedesktop.DBus.Introspectable")
             return DispatchIntrospection(msg);*/
@@ -641,11 +646,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
             if (iface == _interfaces.end())
                 throw DBusException(DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
 
-            return DispatchExceptionHandler(_connection, msg, [&]
-            {
-                iface->second->HandleGetProperty(_connection, msg, targetInterface, property);
-                return true;
-            });
+            iface->second->HandleGetProperty(_connection, msg, targetInterface, property);
+            return true;
         }
 
         if (msg.GetMember() == "Set")
@@ -658,11 +660,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
             if (iface == _interfaces.end())
                 throw DBusException(DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
 
-            return DispatchExceptionHandler(_connection, msg, [&]
-            {
-                iface->second->HandleSetProperty(_connection, msg, targetInterface, property);
-                return true;
-            });
+            iface->second->HandleSetProperty(_connection, msg, targetInterface, property);
+            return true;
         }
 
         if (msg.GetMember() == "GetAll")
@@ -674,11 +673,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
             if (iface == _interfaces.end())
                 throw DBusException(DBUS_ERROR_UNKNOWN_INTERFACE, "Unknown interface");
 
-            return DispatchExceptionHandler(_connection, msg, [&]
-            {
-                iface->second->HandleGetAllProperties(_connection, msg, targetInterface);
-                return true;
-            });
+            iface->second->HandleGetAllProperties(_connection, msg, targetInterface);
+            return true;
         }
 
         return false;
