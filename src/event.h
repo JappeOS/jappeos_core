@@ -19,18 +19,16 @@
 #pragma once
 #include <functional>
 #include <unordered_map>
-#include <cstddef>   // for std::size_t
+#include <cstddef>
 
 namespace JappeStudios::JappeOS::JappeOSCore
 {
-    // Generic event system
     template <typename... Args>
     class Event
     {
     public:
         using Handler = std::function<void(Args...)>;
 
-        // Subscribe: returns an ID you can use to unsubscribe later
         std::size_t Subscribe(Handler handler)
         {
             auto id = _nextId++;
@@ -38,13 +36,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
             return id;
         }
 
-        // Unsubscribe by ID
         void Unsubscribe(std::size_t id)
         {
             _handlers.erase(id);
         }
 
-        // Trigger (raise) the event
         void operator()(Args... args) const
         {
             for (auto& [id, handler] : _handlers)
@@ -53,7 +49,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
             }
         }
 
-        // Clear all handlers
         void Clear()
         {
             _handlers.clear();
