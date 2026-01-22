@@ -17,7 +17,6 @@
  */
 
 #pragma once
-#include <cstdint>
 #include <stdexcept>
 #include <dbus/dbus.h>
 
@@ -26,19 +25,22 @@ namespace JappeStudios::JappeOS::JappeOSCore::Utils
     class DBusUtils
     {
     public:
-        /// Returns the process ID that a message was sent from.
+        /**
+         * @param conn A D-Bus connection
+         * @param msg The target message tp get the PID from
+         * @return The process ID that the message was sent from
+         */
         static pid_t GetSenderPID(DBusConnection* conn, DBusMessage* msg)
         {
             const char *sender = dbus_message_get_sender(msg);
             if (!sender)
                 return 0; // No sender info (e.g., message from bus itself)
 
-            // Create a method call to org.freedesktop.DBus
             DBusMessage* method = dbus_message_new_method_call(
-                "org.freedesktop.DBus",       // destination (the bus daemon)
-                "/org/freedesktop/DBus",      // object path
-                "org.freedesktop.DBus",       // interface
-                "GetConnectionUnixProcessID"  // method name
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                "org.freedesktop.DBus",
+                "GetConnectionUnixProcessID"
             );
 
             if (!method)
