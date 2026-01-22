@@ -1045,4 +1045,4 @@ dkms.conf
 *.dis
 
 # Temporary project ignores (TODO)
-src/services/bsod
+/src/services/bsod/
