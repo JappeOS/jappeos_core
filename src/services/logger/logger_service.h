@@ -30,14 +30,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger
     public:
         explicit LoggerService(ServiceManager* serviceManager, Connection* conn) : Service(serviceManager, conn) {}
 
-        virtual void Emerg(const std::string& str) = 0;
-        virtual void Alert(const std::string& str) = 0;
-        virtual void Crit(const std::string& str) = 0;
-        virtual void Err(const std::string& str) = 0;
-        virtual void Warn(const std::string& str) = 0;
+        virtual void Emerg (const std::string& str) = 0;
+        virtual void Alert (const std::string& str) = 0;
+        virtual void Crit  (const std::string& str) = 0;
+        virtual void Err   (const std::string& str) = 0;
+        virtual void Warn  (const std::string& str) = 0;
         virtual void Notice(const std::string& str) = 0;
-        virtual void Info(const std::string& str) = 0;
-        virtual void Debug(const std::string& str) = 0;
+        virtual void Info  (const std::string& str) = 0;
+        virtual void Debug (const std::string& str) = 0;
 
         bool HandleMethodCallLegacy(DBusMessage* msg) override
         {
