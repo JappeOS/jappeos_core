@@ -18,10 +18,7 @@
 
 #pragma once
 
-#define NETWORK_DEVICE_TYPE_WIFI          "wifi"
-#define NETWORK_DEVICE_TYPE_ETHERNET      "ethernet"
-#define NETWORK_DEVICE_TYPE_UNKNOWN       "unknown"
-
-#define NETWORK_DEVICE_STATE_CONNECTED    "connected"
-#define NETWORK_DEVICE_STATE_CONNECTING   "connecting"
-#define NETWORK_DEVICE_STATE_DISCONNECTED "disconnected"
+#define NETWORK_CONNECTION_STATE_ACTIVATED    "activated"
+#define NETWORK_CONNECTION_STATE_ACTIVATING   "activating"
+#define NETWORK_CONNECTION_STATE_DEACTIVATING "deactivating"
+#define NETWORK_CONNECTION_STATE_UNKNOWN      "unknown"

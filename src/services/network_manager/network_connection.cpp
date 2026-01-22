@@ -35,8 +35,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                                          _ip4Address    (_conn, _iface, "Ip4Address", ""),
                                          _ip6Address    (_conn, _iface, "Ip6Address", ""),
                                          _signalStrength(_conn, _iface, "SignalStrength", -1)
-    {
-
-    }
+    {}
 
 }

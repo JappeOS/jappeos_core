@@ -45,7 +45,8 @@ add_executable(jappeos_core src/main.cpp
         src/services/network_manager/network_access_point.cpp
         src/services/network_manager/network_connection.cpp
         src/services/network_manager/network_connection.h
-        src/services/network_manager/network_device_def.h)
+        src/services/network_manager/network_device_def.h
+        src/services/network_manager/network_connection_def.h)
 
 # Add include directories
 target_include_directories(jappeos_core PRIVATE

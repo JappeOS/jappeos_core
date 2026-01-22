@@ -19,6 +19,7 @@
 #pragma once
 #include <NetworkManager.h>
 
+#include "network_connection_def.h"
 #include "network_device_def.h"
 #include "../service.h"
 
@@ -38,10 +39,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         [[nodiscard]] std::vector<ObjectPath> ListDevices() const;
 
     private:
-        Object _object;
+        Object     _object;
         Interface& _iface;
-        NMClient* _nmClient = nullptr;
-        std::unordered_map<ObjectPath, std::unique_ptr<NetworkDevice>, ObjectPathHash> _devices;
+        NMClient*  _nmClient = nullptr;
+        std::unordered_map<ObjectPath, std::unique_ptr<NetworkDevice>, ObjectPathHash>     _devices;
         std::unordered_map<ObjectPath, std::unique_ptr<NetworkConnection>, ObjectPathHash> _connections;
 
         std::unique_ptr<SignalSubscription> _subNameOwnerChanged;
@@ -66,7 +67,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void OnDeviceManagedChanged(NMDevice* nmDev);
         void OnDeviceActiveConnectionChanged(NMDevice* nmDev);
         NetworkDevice* FindDevice(NMDevice* nmDev);
-        NMDeviceWifi* FindWifiDeviceForConnection(const NetworkConnection& conn);
+        NMDeviceWifi* FindWifiDeviceForConnection(const NetworkConnection& conn) const;
 
         void EnsureConnectionObject(NMDevice* nmDev, NMActiveConnection* ac, const ObjectPath& path);
         void RemoveConnection(NMActiveConnection* ac);
@@ -85,9 +86,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         {
             switch (t)
             {
-                case NM_DEVICE_TYPE_WIFI:     return "wifi";
-                case NM_DEVICE_TYPE_ETHERNET: return "ethernet";
-                default:                      return "unknown";
+                case NM_DEVICE_TYPE_WIFI:     return NETWORK_DEVICE_TYPE_WIFI;
+                case NM_DEVICE_TYPE_ETHERNET: return NETWORK_DEVICE_TYPE_ETHERNET;
+                default:                      return NETWORK_DEVICE_TYPE_UNKNOWN;
             }
         }
 
@@ -98,10 +99,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                 case NM_DEVICE_STATE_ACTIVATED: return NETWORK_DEVICE_STATE_CONNECTED;
                 case NM_DEVICE_STATE_PREPARE:
                 case NM_DEVICE_STATE_CONFIG:
-                case NM_DEVICE_STATE_NEED_AUTH:
-                    return NETWORK_DEVICE_STATE_CONNECTING;
-                default:
-                    return NETWORK_DEVICE_STATE_DISCONNECTED;
+                case NM_DEVICE_STATE_NEED_AUTH: return NETWORK_DEVICE_STATE_CONNECTING;
+                default:                        return NETWORK_DEVICE_STATE_DISCONNECTED;
             }
         }
 
@@ -109,22 +108,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         {
             switch (s)
             {
-                case NM_ACTIVE_CONNECTION_STATE_ACTIVATED:
-                    return "activated";
-                case NM_ACTIVE_CONNECTION_STATE_ACTIVATING:
-                    return "activating";
-                case NM_ACTIVE_CONNECTION_STATE_DEACTIVATING:
-                    return "deactivating";
-                default:
-                    return "unknown";
+                case NM_ACTIVE_CONNECTION_STATE_ACTIVATED:    return NETWORK_CONNECTION_STATE_ACTIVATED;
+                case NM_ACTIVE_CONNECTION_STATE_ACTIVATING:   return NETWORK_CONNECTION_STATE_ACTIVATING;
+                case NM_ACTIVE_CONNECTION_STATE_DEACTIVATING: return NETWORK_CONNECTION_STATE_DEACTIVATING;
+                default:                                      return NETWORK_CONNECTION_STATE_UNKNOWN;
             }
         }
 
-        // TODO: Maybe use something better than this to send NM interface names over D-Bus.
+        // TODO: Maybe use something better than this method to send NM interface names (and other names) over D-Bus.
         static std::string EncodeForObjectPath(const std::string_view s)
         {
             std::string out;
-            for (unsigned char c : s)
+            for (const unsigned char c : s)
             {
                 if (std::isalnum(c) || c == '_')
                     out += c;

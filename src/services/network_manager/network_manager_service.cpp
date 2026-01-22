@@ -83,7 +83,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         SharedPolicy(message);
         auto msg = Message::CreateMethodReturn(message);
         const auto list = ListDevices();
-        _serviceManager->Get<Logger::LoggerService>()->Debug("OnListDevices called, returning " + std::to_string(list.size()) + " devices");
+        _serviceManager->Get<Logger::LoggerService>()->Debug(
+            "OnListDevices called, returning " + std::to_string(list.size()) + " devices"
+        );
         msg.SetArgs(list);
         msg.Send(*_conn);
     }
@@ -356,7 +358,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             const auto oldPath = dev->GetActiveConnection();
             if (oldPath != ObjectPath{})
             {
-                //EmitConnectionRemoved(oldPath);
                 _connections.erase(oldPath);
             }
 
@@ -388,7 +389,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         return it != _devices.end() ? it->second.get() : nullptr;
     }
 
-    NMDeviceWifi* NetworkManagerService::FindWifiDeviceForConnection(const NetworkConnection& conn)
+    NMDeviceWifi* NetworkManagerService::FindWifiDeviceForConnection(const NetworkConnection& conn) const
     {
         auto* nmDev = nm_client_get_device_by_path(
             _nmClient,

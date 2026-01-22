@@ -30,12 +30,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                           Connection& connection,
                           ObjectPath objectPath);
 
-        [[nodiscard]] std::string GetId() const { return _id.Get(); }
-        [[nodiscard]] std::string GetType() const { return _type.Get(); }
-        [[nodiscard]] std::string GetState() const { return _state.Get(); }
+        [[nodiscard]] std::string GetId() const         { return _id.Get(); }
+        [[nodiscard]] std::string GetType() const       { return _type.Get(); }
+        [[nodiscard]] std::string GetState() const      { return _state.Get(); }
         [[nodiscard]] std::string GetIp4Address() const { return _ip4Address.Get(); }
         [[nodiscard]] std::string GetIp6Address() const { return _ip6Address.Get(); }
-        [[nodiscard]] int GetSignalStrength() const { return _signalStrength.Get(); }
+        [[nodiscard]] int GetSignalStrength() const     { return _signalStrength.Get(); }
 
     protected:
         Connection& _conn;

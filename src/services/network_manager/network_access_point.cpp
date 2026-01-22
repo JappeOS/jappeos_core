@@ -34,8 +34,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                                            _security (_conn, _iface, "Security", ""),
                                            _frequency(_conn, _iface, "Frequency", 0),
                                            _connected(_conn, _iface, "Connected", false)
-    {
-
-    }
+    {}
 
 }
