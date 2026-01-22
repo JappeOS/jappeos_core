@@ -29,38 +29,11 @@
 namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 {
 
-    static int pam_conversation(const int num_msg, const struct pam_message **msg,
-                           struct pam_response **resp, void *appdata_ptr)
+    SessionManagerService::SessionManagerService(ServiceManager* serviceManager, Connection* conn)
+        : Service(serviceManager, conn)
     {
-        const auto* ctx = static_cast<PamConversationCtx *>(appdata_ptr);
-        if (num_msg <= 0) return PAM_CONV_ERR;
-        struct pam_response *r = static_cast<struct pam_response *>(calloc(num_msg, sizeof(*r)));
-        for (int i = 0; i < num_msg; ++i)
-        {
-            if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF)
-            {
-                if (!r) return PAM_BUF_ERR;
-                char* dup = strdup(ctx->password.c_str());
-                if (!dup)
-                {
-                    free(r);
-                    return PAM_BUF_ERR;
-                }
-                r[i].resp = dup;
-                r[i].resp_retcode = 0;
-            }
-            else
-            {
-                // handle other message styles as needed
-                r[i].resp = nullptr;
-            }
-        }
-        *resp = r;
-        return PAM_SUCCESS;
-    }
-
-    SessionManagerService::SessionManagerService(ServiceManager* serviceManager, Connection* conn) : Service(serviceManager, conn)
-    {
+        _logger = _serviceManager->Get<Logger::LoggerService>();
+        
         DBusError err;
         dbus_error_init(&err);
 
@@ -75,7 +48,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         if (dbus_error_is_set(&err))
         {
-            _serviceManager->Get<Logger::LoggerService>()->Err(std::string("Failed to add D-Bus match: ") + err.message);
+            _logger->Err(
+                std::string("Failed to add D-Bus match: ") + err.message
+            );
             dbus_error_free(&err);
         }
 
@@ -88,17 +63,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     SessionManagerService::~SessionManagerService()
     {
         // Stop all sessions
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-        for (auto& [id, sess] : _sessions)
+        for (auto &sess: _sessions | std::views::values)
         {
             // --- 1) Terminate processes ---
             if (!TerminateUserSessionProcesses(_greeterSessionID))
             {
-                logger->Warn("Failed to terminate processes for session " + _greeterSessionID);
+                _logger->Warn("Failed to terminate processes for session " + _greeterSessionID);
                 // Continue cleanup anyway, but client will know something went wrong
             }
 
-            // --- 2) Signal child to clean up PAM and exit ---
+            // --- 2) Cleanup PAM ---
             TerminatePAMForSession(sess);
         }
 
@@ -106,26 +80,24 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         _sessions.clear();
         _greeterSessionID = {};
         _isGreeterActive = false;
+        _logger = nullptr;
     }
 
     bool SessionManagerService::CreateLoginSession()
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         if (_isGreeterActive)
         {
-            logger->Warn("Tried to spawn greeter while greeter was already active");
+            _logger->Warn("Tried to spawn greeter while greeter was already active");
             return false;
         }
 
-        struct passwd* pwd = nullptr;
+        const passwd* pwd = nullptr;
 
         // --- 1) Lookup UID ---
-        logger->Debug("PRE getpwnam"); // TODO: REM
         pwd = getpwnam(JOS_GREETER_USER);
         if (!pwd)
         {
-            logger->Err(std::string("Failed to get greeter user: ") + JOS_GREETER_USER);
+            _logger->Err(std::string("Failed to get greeter user: ") + JOS_GREETER_USER);
             return false;
         }
 
@@ -149,8 +121,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             {
                 // Wait for graceful exit (with timeout)
                 int status;
-                pid_t result = waitpid(leaderPid, &status, WNOHANG);
-                if (result == 0)
+                if (pid_t result = waitpid(leaderPid, &status, WNOHANG); result == 0)
                 {
                     // Child didn't exit quickly, wait a bit longer
                     usleep(100000); // 100ms grace period
@@ -167,84 +138,102 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             }
         };
 
-        logger->Debug("PRE AuthenticateAndOpenPAMSession"); // TODO: REM
-        if (!AuthenticateAndOpenPAMSession(PAM_GREETER_SERVICE, JOS_GREETER_USER, "", controlFd, leaderPid))
+        if (!AuthenticateAndOpenPAMSession(
+            PAM_GREETER_SERVICE,
+            JOS_GREETER_USER,
+            "",
+            controlFd,
+            leaderPid))
         {
-            logger->Err("Failed to open PAM session for greeter");
+            _logger->Err("Failed to open PAM session for greeter");
             cleanupPam();
             return false;
         }
 
         // --- 3) Session ID ---
-        logger->Debug("PRE QueryLogindSessionForUid"); // TODO: REM
         std::string objectPath;
         const std::string sessionId = QueryLogindSessionForUid(pwd->pw_uid, objectPath);
         if (sessionId.empty())
         {
-            logger->Err("No logind session found for greeter UID: " + std::to_string(pwd->pw_uid));
+            _logger->Err("No logind session found for greeter UID: " + std::to_string(pwd->pw_uid));
             cleanupPam();
             return false;
         }
 
         // --- 4) Query seat ---
-        logger->Debug("PRE QueryLogindSeatForSession"); // TODO: REM
         std::string seat = QueryLogindSeatForSession(sessionId, objectPath);
         if (seat.empty())
         {
-            logger->Warn("No seat found for session " + sessionId);
-            seat = "seat0"; // safe fallback
+            _logger->Warn("No seat found for session " + sessionId);
+            seat = "seat0";
         }
 
         // --- 5) Spawn compositor/login UI ---
         std::string scopeName;
-        if (!SpawnUserSessionProcesses(true, JOS_GREETER_USER, sessionId, seat, scopeName))
+        if (!SpawnUserSessionProcesses(
+            true,
+            JOS_GREETER_USER,
+            sessionId,
+            seat,
+            scopeName))
         {
-            logger->Err(std::string("Failed to spawn user session for ") + JOS_GREETER_USER);
+            _logger->Err(std::string("Failed to spawn user session for ") + JOS_GREETER_USER);
             cleanupPam();
             return false;
         }
 
         if (scopeName.empty())
         {
-            logger->Err(std::string("SpawnUserSessionProcesses returned empty scopeName for ") + JOS_GREETER_USER);
+            _logger->Err(
+                std::string("SpawnUserSessionProcesses returned empty scopeName for ") + JOS_GREETER_USER
+            );
             TerminateUserSessionProcesses(sessionId);
             cleanupPam();
             return false;
         }
 
-        // --- 6) Set current _greeterSession value ---
-        _sessions[sessionId] = { JOS_GREETER_USER, scopeName, static_cast<uid_t>(pwd->pw_uid), leaderPid, controlFd, seat, {} };
+        // --- 6) Set current values ---
+        _sessions[sessionId] =
+        {
+            JOS_GREETER_USER,
+            scopeName,
+            static_cast<uid_t>(pwd->pw_uid),
+            leaderPid,
+            controlFd,
+            seat,
+            {}
+        };
+
         _greeterSessionID = sessionId;
         _pendingUnits.push_back(scopeName);
         controlFd = -1;
 
         // --- 7) logind session ---
-        if (USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY) std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // TODO: Remove sleep and wait for UI properly
+        if (USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // TODO: Remove sleep and wait for UI properly
         if (!ActivateLogindSession(sessionId, seat))
         {
-            logger->Warn("Failed to activate logind session: " + sessionId);
+            _logger->Warn("Failed to activate logind session: " + sessionId);
         }
 
         // --- 8) Return success ---
-        logger->Info("Greeter session initialized successfully");
+        _logger->Info("Greeter session initialized successfully");
         _isGreeterActive = true;
         return true;
     }
 
     bool SessionManagerService::StopLoginSession()
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         if (!_isGreeterActive)
         {
-            logger->Warn("StopLoginSession called but greeter is not active");
+            _logger->Warn("StopLoginSession called but greeter is not active");
             return false;
         }
 
         const auto it = _sessions.find(_greeterSessionID);
         if (it == _sessions.end())
         {
-            logger->Crit("StopLoginSession called but session was not found");
+            _logger->Crit("StopLoginSession called but session was not found");
             return false;
         }
 
@@ -253,18 +242,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         // --- 1) Terminate processes ---
         if (!TerminateUserSessionProcesses(_greeterSessionID))
         {
-            logger->Warn("Failed to terminate processes for session " + _greeterSessionID);
+            _logger->Warn("Failed to terminate processes for session " + _greeterSessionID);
             // Continue cleanup anyway, but client will know something went wrong
         }
 
-        // --- 2) Signal child to clean up PAM and exit ---
+        // --- 2) Terminate PAM ---
         TerminatePAMForSession(session);
 
         // --- 3) Cleanup and return ---
         _sessions.erase(it);
         _greeterSessionID = {};
         _isGreeterActive = false;
-        logger->Info("Greeter session terminated successfully");
+        _logger->Info("Greeter session terminated successfully");
         return true;
     }
 
@@ -277,7 +266,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     {
         if (allowChildProcesses)
         {
-            _serviceManager->Get<Logger::LoggerService>()->Warn("Use of potentially unsafe option 'allowChildProcesses' on 'IsPrivilegedClientProcess'!");
+            _logger->Warn(
+                "Use of potentially unsafe option 'allowChildProcesses' on 'IsPrivilegedClientProcess'!"
+            );
         }
 
         return std::ranges::any_of(_sessions, [&](auto const& e)
@@ -325,7 +316,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                         DBUS_TYPE_STRING, &result,
                         DBUS_TYPE_INVALID))
                 {
-                    _serviceManager->Get<Logger::LoggerService>()->Err(
+                    _logger->Err(
                         std::string("Failed to parse JobRemoved signal: ") +
                         (err.message ? err.message : "unknown"));
                     dbus_error_free(&err);
@@ -334,12 +325,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
                 dbus_error_free(&err);
 
-                OnJobRemoved(unitName, result);
-                return true; // Signal handled
+                OnJobRemoved(unitName);
+                return true;
             }
 
-            // Other signals can be handled here
-            return true; // Ignore unknown signals
+            return true;
         }
 
         const char* sender = dbus_message_get_sender(msg);
@@ -355,7 +345,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const uid_t senderUid = dbus_bus_get_unix_user(_rawConn, sender, &err);
         if (dbus_error_is_set(&err))
         {
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_ACCESS_DENIED, std::string("Failed to get UID for sender ") + sender + ": " + (err.message ? err.message : "unknown"));
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_ACCESS_DENIED,
+                std::string("Failed to get UID for sender ") + sender + ": "
+                    + (err.message ? err.message : "unknown")
+            );
             dbus_error_free(&err);
             return true;
         }
@@ -365,14 +361,24 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const char* iface = dbus_message_get_interface(msg);
         if (!iface)
         {
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_UNKNOWN_INTERFACE, "No interface specified");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_UNKNOWN_INTERFACE,
+                "No interface specified"
+            );
             return true;
         }
 
         const char* member = dbus_message_get_member(msg);
         if (!member)
         {
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_UNKNOWN_METHOD, "No method specified");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_UNKNOWN_METHOD,
+                "No method specified"
+            );
             return true;
         }
 
@@ -382,13 +388,23 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             DBusMessageIter args;
             if (!dbus_message_iter_init(msg, &args))
             {
-                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected arguments: username, password");
+                SendErrorReplyAndLogLegacy(
+                    _rawConn,
+                    msg,
+                    DBUS_ERROR_INVALID_ARGS,
+                    "Expected arguments: username, password"
+                );
                 return true;
             }
 
             if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string username");
+                SendErrorReplyAndLogLegacy(
+                    _rawConn,
+                    msg,
+                    DBUS_ERROR_INVALID_ARGS,
+                    "Expected string username"
+                );
                 return true;
             }
             const char* username = nullptr;
@@ -397,7 +413,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             if (!dbus_message_iter_next(&args) ||
                 dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string password");
+                SendErrorReplyAndLogLegacy(
+                    _rawConn,
+                    msg,
+                    DBUS_ERROR_INVALID_ARGS,
+                    "Expected string password"
+                );
                 return true;
             }
             const char* password = nullptr;
@@ -405,7 +426,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
             if (!username || !password)
             {
-                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Null argument(s)");
+                SendErrorReplyAndLogLegacy(
+                    _rawConn,
+                    msg,
+                    DBUS_ERROR_INVALID_ARGS,
+                    "Null argument(s)"
+                );
                 return true;
             }
 
@@ -417,13 +443,23 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             DBusMessageIter args;
             if (!dbus_message_iter_init(msg, &args))
             {
-                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected arguments: sessionId");
+                SendErrorReplyAndLogLegacy(
+                    _rawConn,
+                    msg,
+                    DBUS_ERROR_INVALID_ARGS,
+                    "Expected arguments: sessionId"
+                );
                 return true;
             }
 
             if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
             {
-                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Expected string sessionId");
+                SendErrorReplyAndLogLegacy(
+                    _rawConn,
+                    msg,
+                    DBUS_ERROR_INVALID_ARGS,
+                    "Expected string sessionId"
+                );
                 return true;
             }
 
@@ -432,7 +468,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
             if (!sessionId)
             {
-                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "Null sessionId");
+                SendErrorReplyAndLogLegacy(
+                    _rawConn,
+                    msg,
+                    DBUS_ERROR_INVALID_ARGS,
+                    "Null sessionId"
+                );
                 return true;
             }
 
@@ -444,7 +485,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             DBusMessageIter iter;
             if (dbus_message_iter_init(msg, &iter))
             {
-                SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "ListSessions expects no arguments");
+                SendErrorReplyAndLogLegacy(
+                    _rawConn,
+                    msg,
+                    DBUS_ERROR_INVALID_ARGS,
+                    "ListSessions expects no arguments"
+                );
                 return true;
             }
 
@@ -452,7 +498,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return true;
         }
 
-        SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_UNKNOWN_METHOD, std::string("Unknown DBus method called: ") + member);
+        SendErrorReplyAndLogLegacy(
+            _rawConn,
+            msg,
+            DBUS_ERROR_UNKNOWN_METHOD,
+            std::string("Unknown DBus method called: ") + member
+        );
         return false;
     }
 
@@ -461,21 +512,24 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                               const std::string& username,
                                               const std::string& password)
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         // --- 1) Authorization ---
         if (callerUid != 0 && !IsGreeter(callerUid))
         {
-            logger->Warn("Unauthorized CreateSession attempt by UID " + std::to_string(callerUid));
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_ACCESS_DENIED, "Only greeter may call CreateSession");
+            _logger->Warn("Unauthorized CreateSession attempt by UID " + std::to_string(callerUid));
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_ACCESS_DENIED,
+                "Only greeter may call CreateSession"
+            );
             return;
         }
 
         // --- 2) Lookup UID ---
-        const struct passwd* pwd = getpwnam(username.c_str());
+        const passwd* pwd = getpwnam(username.c_str());
         if (!pwd)
         {
-            logger->Err("CreateSession: unknown user " + username);
+            _logger->Err("CreateSession: unknown user " + username);
             SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_FAILED, "Unknown user");
             return;
         }
@@ -521,9 +575,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         if (!AuthenticateAndOpenPAMSession(PAM_LOGIN_SERVICE, username, password, controlFd, leaderPid))
         {
-            logger->Warn("Authentication failed for user " + username);
+            _logger->Warn("Authentication failed for user " + username);
             cleanupPam();
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_AUTH_FAILED, "Authentication failed");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_AUTH_FAILED,
+                "Authentication failed"
+            );
             return;
         }
 
@@ -532,9 +591,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const std::string sessionId = QueryLogindSessionForUid(pwd->pw_uid, objectPath);
         if (sessionId.empty())
         {
-            logger->Err("No logind session found for user UID: " + std::to_string(pwd->pw_uid));
+            _logger->Err("No logind session found for user UID: " + std::to_string(pwd->pw_uid));
             cleanupPam();
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_FAILED, "Could not determine session ID");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_FAILED,
+                "Could not determine session ID"
+            );
             return;
         }
 
@@ -542,16 +606,21 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::string seat = QueryLogindSeatForSession(sessionId, objectPath);
         if (seat.empty())
         {
-            logger->Warn("No seat found for session " + sessionId);
+            _logger->Warn("No seat found for session " + sessionId);
             seat = "seat0"; // safe fallback
         }
 
         // Ensure sessionId not already in map
-        if (_sessions.count(sessionId))
+        if (_sessions.contains(sessionId))
         {
-            logger->Err("Duplicate sessionId detected: " + sessionId);
+            _logger->Err("Duplicate sessionId detected: " + sessionId);
             cleanupPam();
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_FAILED, "Duplicate session ID");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_FAILED,
+                "Duplicate session ID"
+            );
             return;
         }
 
@@ -559,55 +628,74 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::string scopeName;
         if (!SpawnUserSessionProcesses(false, username, sessionId, seat, scopeName))
         {
-            logger->Err("Failed to spawn user session for " + username);
+            _logger->Err("Failed to spawn user session for " + username);
             cleanupPam();
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_FAILED, "Failed to spawn desktop session");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_FAILED,
+                "Failed to spawn desktop session"
+            );
             return;
         }
 
         if (scopeName.empty())
         {
-            logger->Err("SpawnUserSessionProcesses returned empty scopeName for " + username);
+            _logger->Err("SpawnUserSessionProcesses returned empty scopeName for " + username);
             TerminateUserSessionProcesses(sessionId);
             cleanupPam();
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_FAILED, "Invalid session scope");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_FAILED,
+                "Invalid session scope"
+            );
             return;
         }
 
         // --- 7) Insert into session map ---
-        _sessions[sessionId] = { username, scopeName, uid, leaderPid, controlFd, seat, {} };
+        _sessions[sessionId] =
+        {
+            username,
+            scopeName,
+            uid,
+            leaderPid,
+            controlFd,
+            seat,
+            {}
+        };
+
         _pendingUnits.push_back(scopeName);
         controlFd = -1;
 
         // --- 8) Send reply ---
         SendDBusReply_CreateSession(msg, sessionId, uid, seat);
-        logger->Info("Created session " + sessionId + " for user " + username);
+        _logger->Info("Created session " + sessionId + " for user " + username);
 
         // --- 9) logind session ---
-        if (USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY) std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // TODO: Remove sleep and wait for UI properly
+        if (USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // TODO: Remove sleep and wait for UI properly
         if (!ActivateLogindSession(sessionId, seat))
         {
-            logger->Warn("Failed to activate logind session: " + sessionId);
+            _logger->Warn("Failed to activate logind session: " + sessionId);
         }
 
         // --- 10) Manage greeter ---
         if (!StopLoginSession())
         {
-            logger->Warn("Failed to stop login session.");
+            _logger->Warn("Failed to stop login session.");
         }
     }
 
     void SessionManagerService::SendDBusReply_CreateSession(DBusMessage* msg,
-                                                       const std::string& sessionId,
-                                                       const uid_t uid,
-                                                       const std::string& seat)
+                                                            const std::string& sessionId,
+                                                            const uid_t uid,
+                                                            const std::string& seat)
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         DBusMessage* reply = dbus_message_new_method_return(msg);
         if (!reply)
         {
-            logger->Err("Failed to allocate D-Bus reply for CreateSession");
+            _logger->Err("Failed to allocate D-Bus reply for CreateSession");
             return;
         }
 
@@ -622,14 +710,24 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             !dbus_message_iter_append_basic(&args, DBUS_TYPE_STRING, &seatStr))
         {
             dbus_message_unref(reply);
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_NO_MEMORY, "Failed to build reply");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_NO_MEMORY,
+                "Failed to build reply"
+            );
             return;
         }
 
         if (!dbus_connection_send(_rawConn, reply, nullptr))
         {
             dbus_message_unref(reply);
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_FAILED, "Reply send failed");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_FAILED,
+                "Reply send failed"
+            );
             return;
         }
 
@@ -638,16 +736,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     }
 
     bool SessionManagerService::AuthenticateAndOpenPAMSession(const std::string& service,
-                                                          const std::string& username,
-                                                          const std::string& password,
-                                                          int& out_controlFd,
-                                                          pid_t& out_childPid)
+                                                              const std::string& username,
+                                                              const std::string& password,
+                                                              int& out_controlFd,
+                                                              pid_t& out_childPid)
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
-        struct pam_conv conv;
+        pam_conv conv;
         PamConversationCtx convctx{password};
-        conv.conv = &pam_conversation;
+        conv.conv = &PAMConversation;
         conv.appdata_ptr = &convctx;
 
         const int tty_num = FindFreeTTY();
@@ -655,13 +751,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             ? "/dev/tty" + std::to_string(tty_num)
             : "/dev/tty1";
 
-        // Create communication pipes BEFORE any PAM operations
-        int status_pipe[2];  // For status communication
-        int control_pipe[2]; // For shutdown signaling
+        int status_pipe[2];  // Status communication
+        int control_pipe[2]; // Shutdown signaling
 
         if (pipe(status_pipe) == -1 || pipe(control_pipe) == -1)
         {
-            logger->Err("Failed to create pipes for session management");
+            _logger->Err("Failed to create pipes for session management");
             return false;
         }
 
@@ -670,13 +765,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         {
             close(status_pipe[0]); close(status_pipe[1]);
             close(control_pipe[0]); close(control_pipe[1]);
-            logger->Err("fork() failed");
+            _logger->Err("fork() failed");
             return false;
         }
 
         if (pid == 0)
         {
-            // ===== CHILD PROCESS (Session Leader) =====
+            // CHILD PROCESS (Session Leader)
             close(status_pipe[0]);   // Close read end of status pipe
             close(control_pipe[1]);  // Close write end of control pipe
 
@@ -752,7 +847,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             _exit(0);
         }
 
-        // ===== PARENT PROCESS =====
+        // PARENT PROCESS
         close(status_pipe[1]);   // Close write end of status pipe
         close(control_pipe[0]);  // Close read end of control pipe
 
@@ -768,7 +863,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             kill(pid, SIGKILL);
             waitpid(pid, nullptr, 0);
             explicit_bzero(convctx.password.data(), convctx.password.size());
-            logger->Err("Child process failed to create PAM session");
+            _logger->Err("Child process failed to create PAM session");
             return false;
         }
 
@@ -781,17 +876,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     }
 
     bool SessionManagerService::SpawnUserSessionProcesses(bool isLoginSession,
-                                                     const std::string& username,
-                                                     const std::string& sessionId,
-                                                     const std::string& seat,
-                                                     std::string& outServiceName) const
+                                                          const std::string& username,
+                                                          const std::string& sessionId,
+                                                          const std::string& seat,
+                                                          std::string& outServiceName) const
     {
-        auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         auto pwd = getpwnam(username.c_str());
         if (!pwd)
         {
-            logger->Err(std::string("Failed to get user: ") + username);
+            _logger->Err(std::string("Failed to get user: ") + username);
             return false;
         }
 
@@ -818,10 +911,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 dbus_error_free(&err);
         };
 
-        // Build scope name early
         outServiceName = "session@" + sessionId + ".service";
 
-        // Create method call
         msg = dbus_message_new_method_call(
             "org.freedesktop.systemd1",
             "/org/freedesktop/systemd1",
@@ -830,7 +921,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         );
         if (!msg)
         {
-            logger->Err("Failed to allocate D-Bus message for StartTransientUnit");
+            _logger->Err("Failed to allocate D-Bus message for StartTransientUnit");
             cleanupDbus();
             return false;
         }
@@ -844,7 +935,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         if (!dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &unitName) ||
             !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &mode))
         {
-            logger->Err("Failed to append StartTransientUnit arguments (unit/mode)");
+            _logger->Err("Failed to append StartTransientUnit arguments (unit/mode)");
             cleanupDbus();
             return false;
         }
@@ -853,7 +944,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusMessageIter arrayIter;
         dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "(sv)", &arrayIter);
 
-        // Helper: add string property (returns bool on success)
+        // Helper: add string property
         auto addPropString = [&](const char* key, const char* val) -> bool
         {
             DBusMessageIter structIter, variantIter;
@@ -879,7 +970,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             !addPropString("Slice", "session.slice") ||
             !addPropString("User", username.c_str()))
         {
-            logger->Err("Failed to append basic properties to StartTransientUnit");
+            _logger->Err("Failed to append basic properties to StartTransientUnit");
             dbus_message_iter_close_container(&iter, &arrayIter);
             cleanupDbus();
             return false;
@@ -893,7 +984,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             if (!dbus_message_iter_append_basic(&structIter, DBUS_TYPE_STRING, &key))
             {
                 dbus_message_iter_close_container(&arrayIter, &structIter);
-                logger->Err("Failed to append Environment key");
+                _logger->Err("Failed to append Environment key");
                 dbus_message_iter_close_container(&iter, &arrayIter);
                 cleanupDbus();
                 return false;
@@ -919,7 +1010,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 dbus_message_iter_close_container(&variantIter, &arrayIter2);
                 dbus_message_iter_close_container(&structIter, &variantIter);
                 dbus_message_iter_close_container(&arrayIter, &structIter);
-                logger->Err("Failed to append Environment values");
+                _logger->Err("Failed to append Environment values");
                 dbus_message_iter_close_container(&iter, &arrayIter);
                 cleanupDbus();
                 return false;
@@ -939,22 +1030,38 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             if (!dbus_message_iter_append_basic(&structIter, DBUS_TYPE_STRING, &key))
             {
                 dbus_message_iter_close_container(&arrayIter, &structIter);
-                logger->Err("Failed to append ExecStart key");
+                _logger->Err("Failed to append ExecStart key");
                 dbus_message_iter_close_container(&iter, &arrayIter);
                 cleanupDbus();
                 return false;
             }
 
-            dbus_message_iter_open_container(&structIter, DBUS_TYPE_VARIANT, "a(sasb)", &variantIter);
-            dbus_message_iter_open_container(&variantIter, DBUS_TYPE_ARRAY, "(sasb)", &arrayIter2);
+            dbus_message_iter_open_container(
+                &structIter,
+                DBUS_TYPE_VARIANT,
+                "a(sasb)",
+                &variantIter
+            );
 
-            // One ExecStart entry: ("cage", ["cage", JOS_DESKTOP_BINARY, "--locked"], false)
-            dbus_message_iter_open_container(&arrayIter2, DBUS_TYPE_STRUCT, nullptr, &innerStructIter);
+            dbus_message_iter_open_container(
+                &variantIter,
+                DBUS_TYPE_ARRAY,
+                "(sasb)",
+                &arrayIter2
+            );
+
+            // One ExecStart entry
+            dbus_message_iter_open_container(
+                &arrayIter2,
+                DBUS_TYPE_STRUCT,
+                nullptr,
+                &innerStructIter
+            );
 
             auto path = "/usr/bin/cage";
             if (!dbus_message_iter_append_basic(&innerStructIter, DBUS_TYPE_STRING, &path))
             {
-                logger->Err("Failed to append ExecStart path");
+                _logger->Err("Failed to append ExecStart path");
                 dbus_message_iter_close_container(&arrayIter2, &innerStructIter);
                 dbus_message_iter_close_container(&variantIter, &arrayIter2);
                 dbus_message_iter_close_container(&structIter, &variantIter);
@@ -963,8 +1070,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 return false;
             }
 
-            // arguments array: ["cage", JOS_DESKTOP_BINARY, "--locked"]
-            dbus_message_iter_open_container(&innerStructIter, DBUS_TYPE_ARRAY, "s", &arrayIter3);
+            // Arguments array
+            dbus_message_iter_open_container(
+                &innerStructIter,
+                DBUS_TYPE_ARRAY,
+                "s",
+                &arrayIter3
+            );
+
             auto arg0 = "/usr/bin/cage";
             auto arg1 = "-d";
             auto arg2 = "-s";
@@ -976,7 +1089,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg3) ||
                 !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg4))
             {
-                logger->Err("Failed to append ExecStart args");
+                _logger->Err("Failed to append ExecStart args");
                 dbus_message_iter_close_container(&innerStructIter, &arrayIter3);
                 dbus_message_iter_close_container(&arrayIter2, &innerStructIter);
                 dbus_message_iter_close_container(&variantIter, &arrayIter2);
@@ -1006,14 +1119,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             dbus_message_iter_close_container(&iter, &auxIter);
         }
 
-        // Send message and wait for reply
-        reply = dbus_connection_send_with_reply_and_block(_rawConn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
+        // Send msg and wait for reply
+        reply = dbus_connection_send_with_reply_and_block(
+            _rawConn,
+            msg,
+            DBUS_DEFAULT_SAFE_TIMEOUT,
+            &err
+        );
         dbus_message_unref(msg);
         msg = nullptr;
 
         if (dbus_error_is_set(&err))
         {
-            logger->Err(std::string("StartTransientUnit failed: ") + (err.message ? err.message : "unknown"));
+            _logger->Err(std::string("StartTransientUnit failed: ") + (err.message ? err.message : "unknown"));
             dbus_error_free(&err);
             cleanupDbus();
             return false;
@@ -1021,7 +1139,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         if (!reply)
         {
-            logger->Err("No reply from systemd for StartTransientUnit");
+            _logger->Err("No reply from systemd for StartTransientUnit");
             cleanupDbus();
             return false;
         }
@@ -1029,20 +1147,22 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         // Success: we don't need jobPath now; free reply and connection
         dbus_message_unref(reply);
         reply = nullptr;
-
         return true;
     }
 
     void SessionManagerService::StopSessionDbus(DBusMessage* msg,
-                                        const uid_t callerUid,
-                                        const std::string& sessionId)
+                                                const uid_t callerUid,
+                                                const std::string& sessionId)
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         const auto it = _sessions.find(sessionId);
         if (it == _sessions.end())
         {
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_INVALID_ARGS, "No such session");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_INVALID_ARGS,
+                "No such session"
+            );
             return;
         }
 
@@ -1050,29 +1170,37 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         if (callerUid != session.uid && !PolkitAuthorizeStop(callerUid, sessionId))
         {
-            logger->Warn("Unauthorized StopSession attempt by UID " + std::to_string(callerUid)
+            _logger->Warn("Unauthorized StopSession attempt by UID " + std::to_string(callerUid)
                          + " for session " + sessionId);
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_ACCESS_DENIED, "Not authorized");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_ACCESS_DENIED,
+                "Not authorized"
+            );
             return;
         }
 
         if (!StopSession(sessionId, session))
         {
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_FAILED, "Failed to stop session. Check logs for more information.");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_FAILED,
+                "Failed to stop session. Check logs for more information."
+            );
         }
 
         SendSuccessReplyAndLogLegacy(_rawConn, msg);
-        logger->Info("Stopped session " + sessionId + " successfully");
+        _logger->Info("Stopped session " + sessionId + " successfully");
     }
 
     bool SessionManagerService::StopSession(const std::string& sessionId, SessionInfo& session)
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         // --- Terminate user processes ---
         if (!TerminateUserSessionProcesses(sessionId))
         {
-            logger->Warn("Failed to terminate processes for session " + sessionId);
+            _logger->Warn("Failed to terminate processes for session " + sessionId);
             // Continue cleanup anyway, but client will know something went wrong
         }
 
@@ -1083,16 +1211,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         _sessions.erase(sessionId);
 
         // --- Spawn greeter if needed ---
-        if (!_isGreeterActive && _sessions.empty()) // TODO: Switch to other session or greeter when logged out, if there are no sessions, just create a login session
+        // TODO: Switch to other session or greeter when logged out, if there are no sessions, just create a login session
+        if (!_isGreeterActive && _sessions.empty())
         {
             if (!CreateLoginSession())
-                logger->Warn("Failed to spawn greeter after stopping session " + sessionId);
+                _logger->Warn("Failed to spawn greeter after stopping session " + sessionId);
         }
 
         return true;
     }
 
-    bool SessionManagerService::PolkitAuthorizeStop(uid_t callerUid, const std::string& sessionId)
+    bool SessionManagerService::PolkitAuthorizeStop(const uid_t callerUid, const std::string& sessionId)
     {
         // TODO: Use Polkit
         if (callerUid == 0) return true;
@@ -1101,12 +1230,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     bool SessionManagerService::TerminateUserSessionProcesses(const std::string& sessionId)
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         const auto it = _sessions.find(sessionId);
         if (it == _sessions.end() || it->second.scopeName.empty())
         {
-            logger->Warn("TerminateUserSessionProcesses called for unknown or empty session: " + sessionId);
+            _logger->Warn("TerminateUserSessionProcesses called for unknown or empty session: " + sessionId);
             return false;
         }
 
@@ -1124,7 +1251,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         if (!msg)
         {
-            logger->Err("Failed to allocate D-Bus message for StopUnit");
+            _logger->Err("Failed to allocate D-Bus message for StopUnit");
             return false;
         }
 
@@ -1136,31 +1263,41 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                       DBUS_TYPE_STRING, &mode,
                                       DBUS_TYPE_INVALID))
         {
-            logger->Err("Failed to append arguments to StopUnit message for scope: " + scope);
+            _logger->Err("Failed to append arguments to StopUnit message for scope: " + scope);
             dbus_message_unref(msg);
             return false;
         }
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_rawConn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(
+            _rawConn,
+            msg,
+            DBUS_DEFAULT_SAFE_TIMEOUT,
+            &err
+        );
         dbus_message_unref(msg);
 
         if (!reply)
         {
             if (dbus_error_is_set(&err))
             {
-                logger->Err("StopUnit failed for scope " + scope + ": " + std::string(err.message ? err.message : "unknown"));
+                _logger->Err(
+                    "StopUnit failed for scope "
+                    + scope
+                    + ": "
+                    + std::string(err.message ? err.message : "unknown")
+                );
                 dbus_error_free(&err);
             }
-            else logger->Err("StopUnit returned no reply for scope " + scope);
+            else _logger->Err("StopUnit returned no reply for scope " + scope);
             return false;
         }
 
         dbus_message_unref(reply);
-        logger->Info("Successfully stopped processes for session " + sessionId + " (scope: " + scope + ")");
+        _logger->Info("Successfully stopped processes for session " + sessionId + " (scope: " + scope + ")");
         return true;
     }
 
-    void SessionManagerService::TerminatePAMForSession(SessionInfo& session)
+    void SessionManagerService::TerminatePAMForSession(SessionInfo& session) const
     {
         if (session.leaderPid > 0)
         {
@@ -1183,7 +1320,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 if (result == 0)
                 {
                     // Force kill if still running
-                    _serviceManager->Get<Logger::LoggerService>()->Warn("Child process did not exit gracefully, forcing termination");
+                    _logger->Warn(
+                        "Child process did not exit gracefully, forcing termination"
+                    );
                     kill(session.leaderPid, SIGKILL);
                     waitpid(session.leaderPid, nullptr, 0);
                 }
@@ -1199,14 +1338,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
     }
 
-    void SessionManagerService::ListSessions(DBusMessage* msg, uid_t callerUid)
+    void SessionManagerService::ListSessions(DBusMessage* msg, const uid_t callerUid)
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         // --- Authorization ---
         if (callerUid != 0)
         {
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_ACCESS_DENIED, "Only root may list sessions");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_ACCESS_DENIED,
+                "Only root may list sessions"
+            );
             return;
         }
 
@@ -1214,7 +1356,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusMessage* reply = dbus_message_new_method_return(msg);
         if (!reply)
         {
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_NO_MEMORY, "Failed to allocate D-Bus reply");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_NO_MEMORY,
+                "Failed to allocate D-Bus reply"
+            );
             return;
         }
 
@@ -1225,15 +1372,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusMessageIter arrayIter;
         if (!dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "(ssuss)", &arrayIter))
         {
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_NO_MEMORY, "Failed to open array container for ListSessions");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_NO_MEMORY,
+                "Failed to open array container for ListSessions"
+            );
             dbus_message_unref(reply);
             return;
         }
 
-        for (const auto& kv : _sessions)
+        for (const auto&[id, sessInfo] : _sessions)
         {
-            const std::string& sessionId = kv.first;
-            const SessionInfo& s = kv.second;
+            const std::string& sessionId = id;
+            const SessionInfo& s = sessInfo;
 
             const char* sid = sessionId.c_str();
             const char* user = s.username.c_str();
@@ -1242,9 +1394,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             const char* scope = s.scopeName.c_str();
 
             DBusMessageIter structIter;
-            if (!dbus_message_iter_open_container(&arrayIter, DBUS_TYPE_STRUCT, nullptr, &structIter))
+            if (!dbus_message_iter_open_container(
+                &arrayIter,
+                DBUS_TYPE_STRUCT,
+                nullptr,
+                &structIter))
             {
-                logger->Warn("Failed to open struct container for session " + sessionId);
+                _logger->Warn("Failed to open struct container for session " + sessionId);
                 continue; // skip this session but continue others
             }
 
@@ -1254,7 +1410,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 !dbus_message_iter_append_basic(&structIter, DBUS_TYPE_STRING, &seat) ||
                 !dbus_message_iter_append_basic(&structIter, DBUS_TYPE_STRING, &scope))
             {
-                logger->Warn("Failed to append session data for session " + sessionId);
+                _logger->Warn("Failed to append session data for session " + sessionId);
                 dbus_message_iter_close_container(&arrayIter, &structIter);
                 continue;
             }
@@ -1267,7 +1423,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         // --- Send reply ---
         if (!dbus_connection_send(_rawConn, reply, nullptr))
         {
-            SendErrorReplyAndLogLegacy(_rawConn, msg, DBUS_ERROR_FAILED, "Failed to send ListSessions reply over D-Bus");
+            SendErrorReplyAndLogLegacy(
+                _rawConn,
+                msg,
+                DBUS_ERROR_FAILED,
+                "Failed to send ListSessions reply over D-Bus"
+            );
             dbus_message_unref(reply);
             return;
         }
@@ -1275,23 +1436,21 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         dbus_connection_flush(_rawConn);
         dbus_message_unref(reply);
 
-        logger->Info("ListSessions reply sent successfully (total sessions: " + std::to_string(_sessions.size()) + ")");
+        _logger->Info(
+            "ListSessions reply sent successfully (total sessions: " + std::to_string(_sessions.size()) + ")"
+        );
     }
 
-    void SessionManagerService::OnJobRemoved(const std::string& unitName, const std::string& result)
+    void SessionManagerService::OnJobRemoved(const std::string& unitName)
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         // Only handle our own transient units
         const auto it = std::ranges::find(_pendingUnits, unitName);
         if (it == _pendingUnits.end()) return;
 
-        logger->Info("JobRemoved for unit " + unitName + " (result=" + result + ")");
-
-        // Now query the MainPID for this unit
+        // Query the MainPID for this unit
         if (const pid_t pid = GetUnitMainPID(_rawConn, unitName); pid > 0)
         {
-            logger->Info("Got MainPID for " + unitName + ": " + std::to_string(pid));
+            _logger->Debug("Got MainPID for " + unitName + ": " + std::to_string(pid));
 
             std::string sessionId;
             if (GetSessionIdByUnitName(unitName, sessionId))
@@ -1304,17 +1463,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 }
                 else
                 {
-                    logger->Err("Failed to get session info by unit name: " + unitName);
+                    _logger->Err("Failed to get session info by unit name: " + unitName);
                 }
             }
             else
             {
-                logger->Err("Failed to get session info by unit name: " + unitName);
+                _logger->Err("Failed to get session info by unit name: " + unitName);
             }
         }
         else
         {
-            logger->Warn("Failed to get MainPID for " + unitName);
+            _logger->Warn("Failed to get MainPID for " + unitName);
         }
 
         // Mark unit as completed, etc.
@@ -1333,36 +1492,41 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     std::string SessionManagerService::QueryLogindSessionForUid(const uid_t uid, std::string& outObjectPath) const
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         DBusMessage* msg = dbus_message_new_method_call(
-            "org.freedesktop.login1",            // destination
-            "/org/freedesktop/login1",           // path
-            "org.freedesktop.login1.Manager",    // interface
-            "ListSessions"                       // method
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager",
+            "ListSessions"
         );
         if (!msg)
         {
-            logger->Err("Failed to allocate D-Bus message for ListSessions");
+            _logger->Err("Failed to allocate D-Bus message for ListSessions");
             return "";
         }
 
         DBusError err;
         dbus_error_init(&err);
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_rawConn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(
+            _rawConn,
+            msg,
+            DBUS_DEFAULT_SAFE_TIMEOUT,
+            &err
+        );
         dbus_message_unref(msg);
 
         if (!reply)
         {
             if (dbus_error_is_set(&err))
             {
-                logger->Err("ListSessions call failed: " + std::string(err.message ? err.message : "unknown"));
+                _logger->Err(
+                    "ListSessions call failed: " + std::string(err.message ? err.message : "unknown")
+                );
                 dbus_error_free(&err);
             }
             else
             {
-                logger->Err("ListSessions returned no reply");
+                _logger->Err("ListSessions returned no reply");
             }
             return "";
         }
@@ -1372,14 +1536,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusMessageIter iter;
         if (!dbus_message_iter_init(reply, &iter))
         {
-            logger->Warn("ListSessions reply is empty");
+            _logger->Warn("ListSessions reply is empty");
             dbus_message_unref(reply);
             return "";
         }
 
         if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY)
         {
-            logger->Err("Unexpected ListSessions reply type, expected array");
+            _logger->Err("Unexpected ListSessions reply type, expected array");
             dbus_message_unref(reply);
             return "";
         }
@@ -1418,13 +1582,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 dbus_message_iter_get_basic(&structIter, &objPath);
 
             if (!objPath)
-                logger->Err("Object path expected");
+                _logger->Err("Object path expected");
 
-            if (sessionId) logger->Debug("-> Session ID: " + std::string(sessionId)); // TODO: REM
-            if (sessionUid) logger->Debug("   Session UID: " + std::to_string(sessionUid)); // TODO: REM
-            else logger->Debug("   <no uid>");
-
-            if (sessionUid == uid && sessionId && seatId && *seatId != '\0') // TODO: MIGHT RETURN WRONG SESSION (THE MANAGER ONLY ONE)
+            if (sessionUid == uid && sessionId && seatId && *seatId != '\0')
             {
                 if (objPath && objPath[0] == '/')
                 {
@@ -1434,7 +1594,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 }
                 else
                 {
-                    logger->Err("Invalid object path for session " + std::string(sessionId ? sessionId : "(null)"));
+                    _logger->Err("Invalid object path for session " + std::string(sessionId ? sessionId : "(null)"));
                 }
             }
 
@@ -1444,41 +1604,32 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         dbus_message_unref(reply);
 
         if (!foundSessionId.empty())
-            logger->Info("Found session " + foundSessionId + " for UID " + std::to_string(uid));
+            _logger->Info("Found session " + foundSessionId + " for UID " + std::to_string(uid));
         else
-            logger->Info("No session found for UID " + std::to_string(uid));
+            _logger->Info("No session found for UID " + std::to_string(uid));
 
         return foundSessionId;
     }
 
-    // TODO: Fix issues with retrieving the seat
-    std::string SessionManagerService::QueryLogindSeatForSession(const std::string& sessionId, const std::string& sessionObjectPath) const
+    std::string SessionManagerService::QueryLogindSeatForSession(const std::string& sessionId,
+                                                                 const std::string& sessionObjectPath) const
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         if (sessionObjectPath.empty() || sessionObjectPath[0] != '/')
         {
-            logger->Err("Invalid session object path for session " + sessionId + ": '" + sessionObjectPath + "'");
+            _logger->Err("Invalid session object path for session " + sessionId + ": '" + sessionObjectPath + "'");
             return "seat0";
         }
 
-        // Build the correct object path for the session
-        /*std::string objectPath = "/org/freedesktop/login1/session/";
-        if (!sessionId.empty() && isdigit(sessionId[0]))
-            objectPath += "_" + sessionId;
-        else
-            objectPath += sessionId;*/
-
         DBusMessage* msg = dbus_message_new_method_call(
-            "org.freedesktop.login1",          // destination
-            sessionObjectPath.c_str(),         // object path
-            "org.freedesktop.DBus.Properties", // interface
-            "Get"                              // method
+            "org.freedesktop.login1",
+            sessionObjectPath.c_str(),
+            "org.freedesktop.DBus.Properties",
+            "Get"
         );
 
         if (!msg)
         {
-            logger->Err("Failed to allocate D-Bus message");
+            _logger->Err("Failed to allocate D-Bus message");
             return "seat0";
         }
 
@@ -1489,7 +1640,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                       DBUS_TYPE_STRING, &prop,
                                       DBUS_TYPE_INVALID))
         {
-            logger->Err("Failed to append D-Bus args");
+            _logger->Err("Failed to append D-Bus args");
             dbus_message_unref(msg);
             return "seat0";
         }
@@ -1497,12 +1648,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusError err;
         dbus_error_init(&err);
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_rawConn, msg, 5000, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(
+            _rawConn,
+            msg,
+            DBUS_DEFAULT_SAFE_TIMEOUT,
+            &err
+        );
         dbus_message_unref(msg);
 
         if (!reply)
         {
-            logger->Err("D-Bus call failed: " + std::string(err.message ? err.message : "unknown"));
+            _logger->Err("D-Bus call failed: " + std::string(err.message ? err.message : "unknown"));
             dbus_error_free(&err);
             return "seat0";
         }
@@ -1510,14 +1666,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusMessageIter iter;
         if (!dbus_message_iter_init(reply, &iter))
         {
-            logger->Warn("Empty D-Bus reply");
+            _logger->Warn("Empty D-Bus reply");
             dbus_message_unref(reply);
             return "seat0";
         }
 
         if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_VARIANT)
         {
-            logger->Err("Unexpected D-Bus reply type (expected variant)");
+            _logger->Err("Unexpected D-Bus reply type (expected variant)");
             dbus_message_unref(reply);
             return "seat0";
         }
@@ -1527,8 +1683,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         const char* seatPath = nullptr;
 
-        int argType = dbus_message_iter_get_arg_type(&variantIter);
-        if (argType == DBUS_TYPE_OBJECT_PATH)
+        if (const int argType = dbus_message_iter_get_arg_type(&variantIter); argType == DBUS_TYPE_OBJECT_PATH)
         {
             // Old systemd (< 251)
             dbus_message_iter_get_basic(&variantIter, &seatPath);
@@ -1539,14 +1694,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             DBusMessageIter structIter;
             dbus_message_iter_recurse(&variantIter, &structIter);
 
-            // First element: seat ID (string)
+            // 1:st element: seat ID (string)
             if (dbus_message_iter_get_arg_type(&structIter) == DBUS_TYPE_STRING)
             {
                 const char* seatId = nullptr;
                 dbus_message_iter_get_basic(&structIter, &seatId);
                 dbus_message_iter_next(&structIter);
 
-                // Second element: seat path (object_path)
+                // 2:nd element: seat path (object_path)
                 if (dbus_message_iter_get_arg_type(&structIter) == DBUS_TYPE_OBJECT_PATH)
                 {
                     dbus_message_iter_get_basic(&structIter, &seatPath);
@@ -1556,36 +1711,34 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         if (!seatPath)
         {
-            logger->Err("QueryLogindSeatForSession: could not extract seat object path");
+            _logger->Err("QueryLogindSeatForSession: could not extract seat object path");
         }
 
         dbus_message_unref(reply);
 
         if (!seatPath)
         {
-            logger->Warn("No seat found, defaulting to seat0");
+            _logger->Warn("No seat found, defaulting to seat0");
             return "seat0";
         }
 
-        std::string seatStr(seatPath);
-        if (const auto pos = seatStr.find_last_of('/'); pos != std::string::npos) // TODO: Maybe log this and check value for debugging
+        const std::string seatStr(seatPath);
+        if (const auto pos = seatStr.find_last_of('/'); pos != std::string::npos)
         {
             std::string seat = seatStr.substr(pos + 1);
-            logger->Info("Session " + sessionId + " is on seat " + seat);
+            _logger->Info("Session " + sessionId + " is on seat " + seat);
             return seat;
         }
 
-        logger->Warn("Malformed seat path (" + seatStr + "), defaulting");
+        _logger->Warn("Malformed seat path (" + seatStr + "), defaulting");
         return "seat0";
     }
 
     bool SessionManagerService::ActivateLogindSession(const std::string& sessionId, const std::string& seat) const
     {
-        const auto logger = _serviceManager->Get<Logger::LoggerService>();
-
         if (sessionId.empty())
         {
-            logger->Err("ActivateLogindSession called with empty sessionId");
+            _logger->Err("ActivateLogindSession called with empty sessionId");
             return false;
         }
 
@@ -1597,7 +1750,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         );
         if (!msg)
         {
-            logger->Err("Failed to allocate D-Bus message in ActivateLogindSession");
+            _logger->Err("Failed to allocate D-Bus message in ActivateLogindSession");
             return false;
         }
 
@@ -1607,7 +1760,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                       DBUS_TYPE_STRING, &seat,
                                       DBUS_TYPE_INVALID))
         {
-            logger->Err("Failed to append arguments in ActivateLogindSession");
+            _logger->Err("Failed to append arguments in ActivateLogindSession");
             dbus_message_unref(msg);
             return false;
         }
@@ -1615,22 +1768,27 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusError err;
         dbus_error_init(&err);
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(_rawConn, msg, DBUS_DEFAULT_SAFE_TIMEOUT, &err);
+        DBusMessage* reply = dbus_connection_send_with_reply_and_block(
+            _rawConn,
+            msg,
+            DBUS_DEFAULT_SAFE_TIMEOUT,
+            &err
+        );
         dbus_message_unref(msg);
 
         if (!reply)
         {
             if (dbus_error_is_set(&err))
             {
-                logger->Err("ActivateLogindSession failed: " + std::string(err.message ? err.message : "unknown"));
+                _logger->Err("ActivateLogindSession failed: " + std::string(err.message ? err.message : "unknown"));
                 dbus_error_free(&err);
             }
-            else logger->Err("ActivateLogindSession: no reply received");
+            else _logger->Err("ActivateLogindSession: no reply received");
             return false;
         }
 
         dbus_message_unref(reply);
-        logger->Info("Activated logind session: " + sessionId);
+        _logger->Info("Activated logind session: " + sessionId);
         return true;
     }
 
@@ -1642,7 +1800,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         DBusMessage* reply = nullptr;
         pid_t pid = 0;
 
-        // Step 1: Get the unit object path
+        // --- 1) Get the unit object path ---
         msg = dbus_message_new_method_call(
             "org.freedesktop.systemd1",
             "/org/freedesktop/systemd1",
@@ -1682,7 +1840,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
         dbus_message_unref(reply);
 
-        // Step 2: Get MainPID property
+        // --- 2) Get MainPID property ---
         msg = dbus_message_new_method_call(
             "org.freedesktop.systemd1",
             unitPath,
@@ -1746,7 +1904,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         std::string sessionId = "local-" + std::to_string(millis) + "-" + std::to_string(id);
 
-        _serviceManager->Get<Logger::LoggerService>()->Warn("Generated fallback session ID: " + sessionId);
+        _logger->Warn("Generated fallback session ID: " + sessionId);
 
         return sessionId;
     }
@@ -1795,6 +1953,38 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return std::nullopt;
 
         return ppid;
+    }
+
+    int SessionManagerService::PAMConversation(const int num_msg,
+                                               const pam_message** msg,
+                                               pam_response** resp,
+                                               void* appdata_ptr)
+    {
+        const auto* ctx = static_cast<PamConversationCtx*>(appdata_ptr);
+        if (num_msg <= 0) return PAM_CONV_ERR;
+        pam_response* r = static_cast<struct pam_response*>(calloc(num_msg, sizeof(*r)));
+        for (int i = 0; i < num_msg; ++i)
+        {
+            if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF)
+            {
+                if (!r) return PAM_BUF_ERR;
+                char* dup = strdup(ctx->password.c_str());
+                if (!dup)
+                {
+                    free(r);
+                    return PAM_BUF_ERR;
+                }
+                r[i].resp = dup;
+                r[i].resp_retcode = 0;
+            }
+            else
+            {
+                // TODO: Handle other message styles as needed
+                r[i].resp = nullptr;
+            }
+        }
+        *resp = r;
+        return PAM_SUCCESS;
     }
 
 }

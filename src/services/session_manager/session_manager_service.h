@@ -32,6 +32,10 @@
 
 #include "../service.h"
 
+namespace JappeStudios::JappeOS::JappeOSCore::Services::Logger {
+    class LoggerService;
+}
+
 namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 {
     struct PamConversationCtx
@@ -41,12 +45,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     struct SessionInfo
     {
-        std::string username;
-        std::string scopeName;
-        uid_t uid;
-        pid_t leaderPid;
-        int controlFd;
-        std::string seat;
+        std::string        username;
+        std::string        scopeName;
+        uid_t              uid;
+        pid_t              leaderPid;
+        int                controlFd;
+        std::string        seat;
         std::vector<pid_t> privilegedClientProcesses;
     };
 
@@ -65,13 +69,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         [[nodiscard]] bool IsPrivilegedClientProcess(pid_t pid, bool allowChildProcesses = false) const;
 
     public:
-        const bool USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY = false; // TODO
-        const char* PAM_GREETER_SERVICE = "jappeos-greeter";
-        const char* PAM_LOGIN_SERVICE = "jappeos-login";
-        const char* JOS_DESKTOP_BINARY = "/jappeos/desktop/desktop";
-        const char* JOS_DESKTOP_NAME = "JappeOS Desktop";
-        const char* JOS_GREETER_BINARY = "/jappeos/greeter/greeter";
-        const char* JOS_GREETER_USER = "jos-greeter";
+        const bool USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY = false; // TODO: (used for debugging)
+        const char* PAM_GREETER_SERVICE  = "jappeos-greeter";
+        const char* PAM_LOGIN_SERVICE    = "jappeos-login";
+        const char* JOS_DESKTOP_BINARY   = "/jappeos/desktop/desktop";
+        const char* JOS_DESKTOP_NAME     = "JappeOS Desktop";
+        const char* JOS_GREETER_BINARY   = "/jappeos/greeter/greeter";
+        const char* JOS_GREETER_USER     = "jos-greeter";
         const char* JOS_INSTALLER_BINARY = "/jappeos/installer/installer";
 
     private:
@@ -95,13 +99,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         void StopSessionDbus(DBusMessage* msg, uid_t callerUid, const std::string& sessionId);
         bool StopSession(const std::string& sessionId, SessionInfo& session);
         bool TerminateUserSessionProcesses(const std::string& sessionId);
-        void TerminatePAMForSession(SessionInfo& session);
+        void TerminatePAMForSession(SessionInfo& session) const;
         bool PolkitAuthorizeStop(uid_t callerUid, const std::string& sessionId);
         void ListSessions(DBusMessage* msg, uid_t callerUid);
-        void OnJobRemoved(const std::string& unitName, const std::string& result);
+        void OnJobRemoved(const std::string& unitName);
         [[nodiscard]] bool IsGreeter(uid_t callerUid) const;
         [[nodiscard]] std::string QueryLogindSessionForUid(uid_t uid, std::string& outObjectPath) const;
-        [[nodiscard]] std::string QueryLogindSeatForSession(const std::string& sessionId, const std::string& sessionObjectPath) const;
+        [[nodiscard]] std::string QueryLogindSeatForSession(const std::string& sessionId,
+                                                            const std::string& sessionObjectPath) const;
         [[nodiscard]] bool ActivateLogindSession(const std::string& sessionId, const std::string& seat) const;
         pid_t GetUnitMainPID(DBusConnection* conn, const std::string& unitName);
         [[nodiscard]] std::string GenerateFallbackSessionId() const;
@@ -110,12 +115,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         [[nodiscard]] std::optional<pid_t> GetParentPid(pid_t pid) const;
 
     private:
+        Logger::LoggerService* _logger;
         std::map<std::string, pam_handle_t*> _activePAMHandles;
-        std::map<std::string, SessionInfo> _sessions;
-        std::vector<std::string> _pendingUnits;
+        std::map<std::string, SessionInfo>   _sessions;
+        std::vector<std::string>             _pendingUnits;
         std::string _greeterSessionID;
-        bool _isGreeterActive = false;
-        bool _isLiveEnvironment;
-    };
+        bool        _isGreeterActive = false;
+        bool        _isLiveEnvironment;
 
+    private:
+        static int PAMConversation(int num_msg,
+                                   const pam_message** msg,
+                                   pam_response** resp,
+                                   void* appdata_ptr);
+    };
 }
