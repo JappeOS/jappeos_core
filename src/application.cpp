@@ -52,8 +52,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
             _state = ApplicationState::Running;
             while (_shouldRun)
             {
+                // Update the application
                 Update();
 
+                // Handle signals
                 if (s_signalCaught)
                 {
                     switch (s_signalCaught)
@@ -182,7 +184,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
             throw std::runtime_error("D-Bus error: " + message);
         }
 
-        _conn->AcquireName(Services::DBUS_INTERFACE, DBUS_NAME_FLAG_DO_NOT_QUEUE);
+        _conn->AcquireName(DBUS_INTERFACE, DBUS_NAME_FLAG_DO_NOT_QUEUE);
         _conn->AddMatch("type='method_call'"); // TODO: Don't allow all method calls
         _conn->Flush();
         const int dbus_fd = _conn->GetUnixFd();
@@ -207,7 +209,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         if (poll(_fds, 2, -1) < 0) return;
 
-        static const auto logger = NULL_SAFE_CALL_RET(_serviceManager, Get<Services::Logger::LoggerService>());
+        const auto logger = NULL_SAFE_CALL_RET(_serviceManager, Get<Services::Logger::LoggerService>());
 
         // GLib support
         while (g_main_context_iteration(nullptr, FALSE));
@@ -236,7 +238,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
                 {
                     HandleDBusMessageLegacy(logger, msg.value().GetRawMessage());
                 }
-                //_serviceManager->HandleMessage(msg.value());
                 OnMessageHandlerPost();
             }
         }
@@ -277,7 +278,14 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         if (!msg)
         {
-            NULL_SAFE_CALL(logger, Err(std::string("HandleMethodCall called with null parameters for service `" + svc->GetName() + "` with interface: ") + interface));;
+            NULL_SAFE_CALL(
+                logger,
+                Err(
+                    std::string("HandleMethodCall called with null parameters for service `" + svc->GetName()
+                    + "` with interface: ")
+                    + interface
+                )
+            );
             return;
         }
 
@@ -285,12 +293,20 @@ namespace JappeStudios::JappeOS::JappeOSCore
         {
             if (!svc->HandleMethodCallLegacy(msg))
             {
-                NULL_SAFE_CALL(logger, Debug(std::string("Method not handled in service `" + svc->GetName() + "` with interface: ") + interface));
+                NULL_SAFE_CALL(
+                    logger,
+                    Debug(std::string("Method not handled in service `" + svc->GetName() + "` with interface: ")
+                        + interface)
+                );
             }
         }
         catch (const std::exception& e)
         {
-            NULL_SAFE_CALL(logger, Crit(std::string("(non-fatal) Unhandled exception in service `" + svc->GetName() + "` while handling method call: ") + e.what()));
+            NULL_SAFE_CALL(
+                logger,
+                Crit(std::string("(non-fatal) Unhandled exception in service `" + svc->GetName()
+                    + "` while handling method call: ") + e.what())
+            );
         }
     }
 
@@ -308,7 +324,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         delete _conn;
     }
 
-    void Application::FailFastFatalError(const std::string& errCode, const std::string& message, const std::string& stack) const
+    void Application::FailFastFatalError(const std::string& errCode,
+                                         const std::string& message,
+                                         const std::string& stack) const
     {
         const auto logger = NULL_SAFE_CALL_RET(_serviceManager, Get<Services::Logger::LoggerService>());
 
@@ -318,8 +336,20 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         const auto newStack = stack.empty() ? PrintStackTrace() : stack;
 
-        NULL_SAFE_CALL(logger, Emerg("[Application::FailFastFatalError] FailFastFatalError called! ErrCode: " + newErrCode + ", Message: " + message + ", Stack: " + newStack + ". This indicates that a fatal system error has occurred."));
-        NULL_SAFE_CALL(logger, Crit("[Application::FailFastFatalError] Exiting immediately because of unrecoverable fatal error."));
+        NULL_SAFE_CALL(
+            logger,
+            Emerg(
+                "[Application::FailFastFatalError] FailFastFatalError called! "
+                "ErrCode: " + newErrCode
+                + ", Message: " + message
+                + ", Stack: " + newStack
+                + ". This indicates that a fatal system error has occurred."
+            )
+        );
+        NULL_SAFE_CALL(
+            logger,
+            Crit("[Application::FailFastFatalError] Exiting immediately because of unrecoverable fatal error.")
+        );
         exit(EXIT_FAILURE);
     }
 

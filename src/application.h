@@ -25,10 +25,8 @@
 #include <execinfo.h>
 #include <cxxabi.h>
 #include <iostream>
-#include <bits/ostream.tcc>
 #include <dbus/dbus.h>
 #include <poll.h>
-#include <algorithm>
 
 #include "event.h"
 #include "globals.h"
@@ -59,7 +57,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         void operator=(const Application&) = delete;
         uint8_t Run();
         void Quit(const uint8_t exitCode = EXIT_SUCCESS) { _shouldRun = false; _exitCode = exitCode; }
-        void FailFastFatalError(const std::string& errCode, const std::string& message, const std::string& stack) const;
+        void FailFastFatalError(const std::string& errCode,
+                                const std::string& message,
+                                const std::string& stack) const;
         [[nodiscard]] bool IsRunning() const { return _shouldRun; }
 
     public:
@@ -72,12 +72,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
         static std::string PrintStackTrace(unsigned int max_frames = 64); // TODO: Move to utils
 
     private:
-        bool _shouldRun = true;
-        uint8_t _exitCode = EXIT_SUCCESS;
+        bool             _shouldRun = true;
+        uint8_t          _exitCode = EXIT_SUCCESS;
         ApplicationState _state = ApplicationState::Initializing;
-        Connection* _conn = nullptr;
-        DBusError* _err = new DBusError;
-        pollfd _fds[2]{};
+        Connection*      _conn = nullptr;
+        DBusError*       _err = new DBusError;
+        pollfd           _fds[2]{};
         Services::ServiceManager* _serviceManager = nullptr;
 
         void Initialize();
