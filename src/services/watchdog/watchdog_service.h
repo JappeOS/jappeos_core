@@ -18,7 +18,6 @@
 
 #pragma once
 
-#include <atomic>
 #include <condition_variable>
 #include <thread>
 
@@ -27,7 +26,9 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Watchdog
 {
-    /// A service that watches this core process and ensures the operating system is responding and not "frozen".
+    /**
+     * @brief A service that watches this core process and ensures it is responding and not "frozen".
+     */
     class WatchdogService : public Service
     {
     public:

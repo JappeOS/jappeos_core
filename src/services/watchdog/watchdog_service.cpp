@@ -25,8 +25,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Watchdog
     {
         _timeout = std::chrono::seconds(25); // TODO: Dynamic time?
         _watcherThread = std::thread([this]() { this->ThreadFunc(); });
-        _esub_BeginWatching = Application::GetInstance()->OnMessageHandlerPre.Subscribe([this](){ BeginWatching(); });
-        _esub_EndWatching = Application::GetInstance()->OnMessageHandlerPost.Subscribe([this](){ EndWatching(); });
+        _esub_BeginWatching = Application::GetInstance()->OnMessageHandlerPre.Subscribe([this]{ BeginWatching(); });
+        _esub_EndWatching = Application::GetInstance()->OnMessageHandlerPost.Subscribe([this]{ EndWatching(); });
     }
 
     WatchdogService::~WatchdogService()
@@ -78,7 +78,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Watchdog
 
             if (!_running) break;
 
-            // Now wait for EndWatching or timeout
+            // Wait for EndWatching or timeout
             if (_cv.wait_for(lock, _timeout, [this] { return !_watching || !_running; }))
             {
                 // either EndWatching() was called, or we are shutting down
