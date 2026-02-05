@@ -49,7 +49,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         TryInitNetworkManager();
     }
 
-    NetworkManagerService::~NetworkManagerService() = default;
+    NetworkManagerService::~NetworkManagerService()
+    {
+        OnNetworkManagerDisappeared();
+    }
 
     std::vector<ObjectPath> NetworkManagerService::ListDevices() const
     {
