@@ -1972,4 +1972,181 @@ namespace JappeStudios::JappeOS::JappeOSCore
             sig.Send(_conn);
         }
     };
+
+    /**
+     * @brief Represents a proxy to a remote D-Bus object.
+     *
+     * Provides high-level methods for calling methods and accessing properties
+     * on remote D-Bus objects without dealing with message construction directly.
+     */
+    class Proxy
+    {
+    public:
+        /**
+         * @brief Creates a proxy for a remote D-Bus object.
+         * @param conn Connection to use for communication
+         * @param busName Remote service bus name (e.g., "org.freedesktop.NetworkManager")
+         * @param path Remote object path
+         * @param iface Interface name to interact with
+         */
+        Proxy(Connection& conn,
+              std::string busName,
+              ObjectPath path,
+              InterfaceName iface)
+            : _conn(conn),
+              _busName(std::move(busName)),
+              _path(std::move(path)),
+              _iface(std::move(iface))
+        {}
+
+        /**
+         * @brief Calls a method on the remote object and returns the result.
+         * @tparam ReturnTypes Expected return types
+         * @tparam Args Argument types
+         * @param method Method name
+         * @param args Method arguments
+         * @param timeoutMs Timeout in milliseconds (-1 for default)
+         * @return Tuple of return values
+         * @throws DBusException on error
+         */
+        template<typename... ReturnTypes, typename... Args>
+        std::tuple<ReturnTypes...> CallMethod(const std::string& method,
+                                              const int timeoutMs,
+                                              const Args&... args)
+        {
+            auto msg = Message::CreateMethodCall(_busName, _path, _iface, method);
+            msg.SetArgs(args...);
+            const auto reply = msg.SendWithReply(_conn, timeoutMs);
+            return reply.GetArgs<ReturnTypes...>();
+        }
+
+        /**
+         * @brief Calls a method with default timeout.
+         */
+        template<typename... ReturnTypes, typename... Args>
+        std::tuple<ReturnTypes...> CallMethod(const std::string& method,
+                                              const Args&... args)
+        {
+            return CallMethod<ReturnTypes...>(method, DBUS_DEFAULT_SAFE_TIMEOUT, args...);
+        }
+
+        /**
+         * @brief Calls a method without waiting for/processing the reply.
+         */
+        template<typename... Args>
+        void CallMethodNoReply(const std::string& method, const Args&... args)
+        {
+            auto msg = Message::CreateMethodCall(_busName, _path, _iface, method);
+            msg.SetArgs(args...);
+            msg.Send(_conn);
+        }
+
+        /**
+         * @brief Gets a property value from the remote object.
+         * @tparam T Expected property type
+         * @param propertyName Name of the property
+         * @return The property value
+         * @throws DBusException on error or type mismatch
+         */
+        template<typename T>
+        T GetProperty(const std::string& propertyName)
+        {
+            auto msg = Message::CreateMethodCall(
+                _busName,
+                _path,
+                InterfaceName("org.freedesktop.DBus.Properties"),
+                "Get"
+            );
+            msg.SetArgs(_iface.ToString(), propertyName);
+
+            const auto reply = msg.SendWithReply(_conn);
+            auto [variant] = reply.GetArgs<DBusVariant>();
+
+            // Validate signature
+            const auto expectedSig = DBusSignatureTraits<T>::get();
+            if (variant.signature != expectedSig)
+            {
+                throw DBusException(
+                    DBUS_ERROR_INVALID_SIGNATURE,
+                    "Property type mismatch: expected " + expectedSig +
+                    ", got " + variant.signature
+                );
+            }
+
+            try
+            {
+                return std::any_cast<T>(variant.value);
+            }
+            catch (const std::bad_any_cast&)
+            {
+                throw DBusException(
+                    DBUS_ERROR_FAILED,
+                    "Failed to cast property value"
+                );
+            }
+        }
+
+        /**
+         * @brief Sets a property value on the remote object.
+         * @tparam T Property type
+         * @param propertyName Name of the property
+         * @param value New value
+         * @throws DBusException on error
+         */
+        template<typename T>
+        void SetProperty(const std::string& propertyName, const T& value)
+        {
+            auto msg = Message::CreateMethodCall(
+                _busName,
+                _path,
+                InterfaceName("org.freedesktop.DBus.Properties"),
+                "Set"
+            );
+            msg.SetArgs(_iface.ToString(), propertyName, DBusVariant::make(value));
+            msg.SendWithReplyIgnore(_conn);
+        }
+
+        /**
+         * @brief Gets all properties on the interface.
+         * @return Map of property names to variant values
+         * @throws DBusException on error
+         */
+        [[nodiscard]] std::map<std::string, DBusVariant> GetAllProperties() const
+        {
+            auto msg = Message::CreateMethodCall(
+                _busName,
+                _path,
+                InterfaceName("org.freedesktop.DBus.Properties"),
+                "GetAll"
+            );
+            msg.SetArgs(_iface.ToString());
+
+            const auto reply = msg.SendWithReply(_conn);
+            auto [props] = reply.GetArgs<std::map<std::string, DBusVariant>>();
+            return props;
+        }
+
+        /**
+         * @brief Subscribes to a signal on this interface.
+         * @param signalName Signal name
+         * @param handler Handler function
+         * @return Signal subscription (unsubscribes when destroyed)
+         */
+        [[nodiscard]] SignalSubscription SubscribeSignal(const std::string& signalName,
+                                                         const SignalHandler& handler) const
+        {
+            return _conn.SubscribeSignal(_busName, _path, _iface, signalName, handler);
+        }
+
+        // Accessors
+        [[nodiscard]] const std::string& GetBusName() const { return _busName; }
+        [[nodiscard]] const ObjectPath& GetPath() const { return _path; }
+        [[nodiscard]] const InterfaceName& GetInterface() const { return _iface; }
+
+    private:
+        Connection&   _conn;
+        std::string   _busName;
+        ObjectPath    _path;
+        InterfaceName _iface;
+    };
 }
