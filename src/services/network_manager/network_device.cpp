@@ -30,19 +30,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
     NetworkDevice::NetworkDevice(NetworkManagerService& source,
                                  Connection& connection,
                                  ObjectPath objectPath) :
-                                 NetworkDevice(source, connection, std::move(objectPath), {})
-    {}
-
-    NetworkDevice::NetworkDevice(NetworkManagerService& source,
-                                 Connection& connection,
-                                 ObjectPath objectPath,
-                                 const std::string &childIfaceName) :
                                  _conn(connection),
                                  _path(std::move(objectPath)),
                                  _object(_conn, _path),
-                                 _interfaceName(childIfaceName.empty()
-                                     ? source.GetBaseInterface().Child("Device")
-                                     : source.GetBaseInterface().Child("Device").Child(childIfaceName)),
+                                 _interfaceName(source.GetBaseInterface().Child("Device")),
                                  _iface(_object.CreateInterface(_interfaceName)),
                                  _id              (_conn, _iface, "Id", ""),
                                  _type            (_conn, _iface, "Type", ""),
@@ -52,13 +43,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                                  _activeConnection(_conn, _iface, "ActiveConnection", ObjectPath())
     {}
 
-    void NetworkDevice::SetState(const std::string& newState)
+    void NetworkDevice::SetState(const std::string& state)
     {
-        if (_state.Get() == newState)
+        if (_state.Get() == state)
             return;
 
         const auto old = _state;
-        _state = newState;
+        _state = state;
     }
 
     void NetworkDevice::SetManaged(const bool managed)
@@ -82,13 +73,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
     NetworkWifiDevice::NetworkWifiDevice(NetworkManagerService& source,
                                          Connection& connection,
                                          ObjectPath objectPath) :
-                                         NetworkDevice(source,
-                                                       connection,
-                                                       std::move(objectPath),
-                                                       "WiFi")
+                                         NetworkDevice(source, connection, std::move(objectPath)),
+                                         _interfaceName(source.GetBaseInterface().Child("Device").Child("WiFi")),
+                                         _iface(_object.CreateInterface(_interfaceName))
     {
-        _iface.RegisterMethod("Scan",       [&](const auto &m) { OnScan(m); });
-        _iface.RegisterMethod("Connect",    [&](const auto &m) { OnConnect(m); });
+        _iface.RegisterMethod("Scan", [&](const auto &m) { OnScan(m); });
+        _iface.RegisterMethod("Connect", [&](const auto &m) { OnConnect(m); });
         _iface.RegisterMethod("Disconnect", [&](const auto &m) { OnDisconnect(m); });
         _iface.RegisterProperty<std::vector<ObjectPath>>(
             "AccessPoints",

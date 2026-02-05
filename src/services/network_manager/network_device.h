@@ -43,18 +43,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void SetActiveConnection(const ObjectPath& path);
 
     protected:
-        NetworkDevice(NetworkManagerService& source,
-                      Connection& connection,
-                      ObjectPath objectPath,
-                      const std::string &childIfaceName);
-
         Connection&   _conn;
         ObjectPath    _path;
         Object        _object;
-        InterfaceName _interfaceName;
-        Interface&    _iface;
 
     private:
+        InterfaceName     _interfaceName;
+        Interface&        _iface;
         Prop<std::string> _id;
         Prop<std::string> _type;
         Prop<std::string> _state;
@@ -71,6 +66,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                           ObjectPath objectPath);
 
     private:
+        InterfaceName _interfaceName;
+        Interface&    _iface;
         std::unordered_map<ObjectPath, std::unique_ptr<NetworkAccessPoint>, ObjectPathHash> _accessPoints;
 
         void OnScan(const Message& message);
