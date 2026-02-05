@@ -116,6 +116,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         }
 
         // TODO: Maybe use something better than this method to send NM interface names (and other names) over D-Bus.
+        /**
+         * @brief Converts NetworkManager UUIDs and interface names to valid object paths.
+         * @param s The NM interface of UUID to convert
+         * @return A valid ObjectPath segment
+         */
         static std::string EncodeForObjectPath(const std::string_view s)
         {
             std::string out;
