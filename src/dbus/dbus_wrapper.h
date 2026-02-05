@@ -184,6 +184,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
+    struct DBusSignatureTraits<bool>
+    {
+        static const char* get() { return "b"; }
+    };
+
+    template<>
     struct DBusSignatureTraits<int32_t>
     {
         static const char* get() { return "i"; }
@@ -196,9 +202,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
-    struct DBusSignatureTraits<bool>
+    struct DBusSignatureTraits<long>
     {
-        static const char* get() { return "b"; }
+        static const char* get() { return "x"; }
     };
 
     template<>
@@ -281,6 +287,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
 #pragma endregion
 
+    template<typename T>
+    struct DBusSetTraits;
+
     /**
      * @brief Represents a D-Bus variant. Contains the signature and value.
      */
@@ -289,21 +298,26 @@ namespace JappeStudios::JappeOS::JappeOSCore
         std::string signature;
         std::any value;
 
+        using AppendFn = void(*)(DBusMessageIter&, const std::any&);
+        AppendFn append_fn;
+
         template<typename T>
         static DBusVariant make(T&& v)
         {
+            using U = std::decay_t<T>;
             return {
-                DBusGetSignature<std::decay_t<T>>(),
-                std::forward<T>(v)
+                DBusGetSignature<U>(),
+                std::forward<T>(v),
+                [](DBusMessageIter& it, const std::any& a)
+                {
+                    DBusSetTraits<U>::append(it, std::any_cast<const U&>(a));
+                }
             };
         }
     };
 
     // ========== SET TRAITS ==========
 #pragma region SetTraits
-
-    template<typename T>
-    struct DBusSetTraits;
 
     template<>
     struct DBusSetTraits<bool>
@@ -331,6 +345,16 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         static constexpr int type = DBUS_TYPE_UINT32;
         static void append(DBusMessageIter& it, const uint32_t& v)
+        {
+            AppendValue(it, type, &v);
+        }
+    };
+
+    template<>
+    struct DBusSetTraits<long>
+    {
+        static constexpr int type = DBUS_TYPE_INT64;
+        static void append(DBusMessageIter& it, const long& v)
         {
             AppendValue(it, type, &v);
         }
@@ -507,12 +531,28 @@ namespace JappeStudios::JappeOS::JappeOSCore
                 &sub
             );
 
-            appendBySignature(sub, v.signature, v.value);
+            v.append_fn(sub, v.value);
 
             dbus_message_iter_close_container(&it, &sub);
         }
 
-    private:
+        /*static void append(DBusMessageIter& it, const DBusVariant& v)
+        {
+            DBusMessageIter sub;
+
+            dbus_message_iter_open_container(
+                &it,
+                DBUS_TYPE_VARIANT,
+                v.signature.c_str(),
+                &sub
+            );
+
+            appendBySignature(sub, v.signature, v.value);
+
+            dbus_message_iter_close_container(&it, &sub);
+        }*/
+
+    /*private:
         static void appendBySignature(
             DBusMessageIter& it,
             const std::string& sig,
@@ -540,7 +580,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
                 throw DBusException(DBUS_ERROR_INVALID_ARGS,
                     "Unsupported variant signature");
             }
-        }
+        }*/
     };
 
 #pragma endregion
@@ -584,6 +624,19 @@ namespace JappeStudios::JappeOS::JappeOSCore
         static uint32_t get(DBusMessageIter& it)
         {
             uint32_t v;
+            dbus_message_iter_get_basic(&it, &v);
+            dbus_message_iter_next(&it);
+            return v;
+        }
+    };
+
+    template<>
+    struct DBusGetTraits<long>
+    {
+        static constexpr int type = DBUS_TYPE_INT64;
+        static long get(DBusMessageIter& it)
+        {
+            long v;
             dbus_message_iter_get_basic(&it, &v);
             dbus_message_iter_next(&it);
             return v;
@@ -1671,7 +1724,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
                     // Properties.Get MUST return a variant
                     const DBusVariant v = DBusVariant::make(std::move(value));
 
-                    reply.SetArgs(v);
+                    reply.SetArgs(v); // TODO: Error
                 };
             }
 
