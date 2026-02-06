@@ -21,6 +21,8 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
 {
+    class PowerDevice;
+
     class PowerManagerService : public Service
     {
     public:
@@ -28,13 +30,36 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         ~PowerManagerService() override;
         [[nodiscard]] std::string GetName() const override { return "PowerManagerService"; }
 
+        [[nodiscard]] std::vector<ObjectPath> ListDevices() const;
+
     private:
-        Object _mainObject;
+        Object _object;
+        Interface& _iface;
+        bool _uPower = false;
+        std::unordered_map<ObjectPath, std::unique_ptr<PowerDevice>, ObjectPathHash> _devices;
+
+        std::unique_ptr<SignalSubscription> _subNameOwnerChanged;
+
+        std::unique_ptr<SignalSubscription> _subDeviceAdded;
+        std::unique_ptr<SignalSubscription> _subDeviceRemoved;
 
         void SharedPolicy(const Message& message) const;
 
         void OnShutdown(const Message& message) const;
         void OnReboot(const Message& message) const;
         void OnSuspend(const Message& message) const;
+        void OnListBatteryDevices(const Message& message) const;
+        void EmitBatteryDeviceAdded(const ObjectPath& path);
+        void EmitBatteryDeviceRemoved(const ObjectPath& path);
+
+        void OnNameOwnerChanged(const Message& msg);
+        void OnPowerManagerAppeared();
+        void OnPowerManagerDisappeared();
+        void DiscoverDevices();
+        void SubscribeToPowerManagerSignals();
+        void UnsubscribeFromPowerManagerSignals();
+
+        void AddDevice(const ObjectPath& upowerPath);
+        void RemoveDevice(const ObjectPath& upowerPath);
     };
 }
