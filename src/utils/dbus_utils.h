@@ -81,5 +81,28 @@ namespace JappeStudios::JappeOS::JappeOSCore::Utils
             dbus_message_unref(reply);
             return static_cast<pid_t>(pid);
         }
+
+        template<typename T>
+        static void EmitPropertyChanged(const Connection& conn,
+                                        const Interface& iface,
+                                        const std::string& property,
+                                        const T& value)
+        {
+            auto sig = Message::CreateSignal(
+                iface.GetObject().GetPath(),
+                InterfaceName("org.freedesktop.DBus.Properties"),
+                "PropertiesChanged"
+            );
+
+            sig.SetArgs(
+                iface.GetName().ToString(),
+                std::map<std::string, DBusVariant>{
+                    { property, DBusVariant::make(value) }
+                },
+                std::vector<std::string>{}
+            );
+
+            sig.Send(conn);
+        }
     };
 }
