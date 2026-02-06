@@ -124,6 +124,15 @@ namespace JappeStudios::JappeOS::JappeOSCore
         [[nodiscard]] const std::string& ToString() const noexcept { return _path; }
 
         /**
+         * @brief Returns the last path element.
+         *
+         * Example:
+         *   "/org/example/Devices/dev0" -> "dev0"
+         *   "/" -> empty string_view
+         */
+        [[nodiscard]] std::string_view Leaf() const noexcept;
+
+        /**
          * @brief Returns a new ObjectPath with a child element appended.
          *
          * Example:
@@ -2063,12 +2072,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
             auto [variant] = reply.GetArgs<DBusVariant>();
 
             // Validate signature
-            const auto expectedSig = DBusSignatureTraits<T>::get();
+            const char* expectedSig = DBusSignatureTraits<T>::get();
             if (variant.signature != expectedSig)
             {
                 throw DBusException(
                     DBUS_ERROR_INVALID_SIGNATURE,
-                    "Property type mismatch: expected " + expectedSig +
+                    "Property type mismatch: expected " + std::string(expectedSig) +
                     ", got " + variant.signature
                 );
             }
@@ -2138,7 +2147,55 @@ namespace JappeStudios::JappeOS::JappeOSCore
             return _conn.SubscribeSignal(_busName, _path, _iface, signalName, handler);
         }
 
-        // Accessors
+        /**
+         * @brief Subscribes to the properties changed signal on the remote object.
+         * @param property Property name
+         * @param handler Handler function
+         * @return Signal subscription (unsubscribes when destroyed)
+         */
+        template<typename T>
+        [[nodiscard]] SignalSubscription SubscribePropertyChanged(const std::string& property,
+                                                                  const std::function<void(const T&)>& handler) const
+        {
+            const SignalHandler newHandler = [&](const Message& msg)
+            {
+                const auto args = msg.GetArgs<
+                    std::string,
+                    std::map<std::string, DBusVariant>,
+                    std::vector<std::string>>();
+
+                if (std::get<0>(args) != _iface.ToString())
+                    return;
+
+                const auto map = std::get<1>(args);
+                const auto it = map.find(property);
+                if (it == map.end()) return;
+
+                T value;
+                try
+                {
+                    value = std::any_cast<T>(it->second.value);
+                }
+                catch (const std::bad_any_cast&)
+                {
+                    throw DBusException(
+                        DBUS_ERROR_FAILED,
+                        "Failed to cast property value"
+                    );
+                }
+
+                handler(value);
+            };
+
+            return _conn.SubscribeSignal(
+                _busName,
+                _path,
+                InterfaceName("org.freedesktop.DBus.Properties"),
+                "PropertiesChanged",
+                newHandler
+            );
+        }
+
         [[nodiscard]] const std::string& GetBusName() const { return _busName; }
         [[nodiscard]] const ObjectPath& GetPath() const { return _path; }
         [[nodiscard]] const InterfaceName& GetInterface() const { return _iface; }

@@ -33,6 +33,15 @@ namespace JappeStudios::JappeOS::JappeOSCore
         _path = std::move(path);
     }
 
+    std::string_view ObjectPath::Leaf() const noexcept
+    {
+        if (_path == "/")
+            return {};
+
+        const auto pos = _path.find_last_of('/');
+        return std::string_view{_path}.substr(pos + 1);
+    }
+
     ObjectPath ObjectPath::Child(const std::string_view element) const
     {
         if (!IsValidElement(element))
