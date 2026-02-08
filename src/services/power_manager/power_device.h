@@ -24,17 +24,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
 {
 #define JOSPM_PROP_ID                "Id"
 #define JOSPM_PROP_TYPE              "Type"
+#define JOSPM_PROP_POWER_SUPPLY      "PowerSupply"
 #define JOSPM_PROP_STATE             "State"
 #define JOSPM_PROP_CHARGE_PERCENTAGE "ChargePercentage"
 #define JOSPM_PROP_TIME_TO_EMPTY     "TimeToEmpty"
 #define JOSPM_PROP_TIME_TO_FULL      "TimeToFull"
 
-#define UPOWER_PROP_SERIAL        "Serial"
-#define UPOWER_PROP_TYPE          "Type"
-#define UPOWER_PROP_STATE         "State"
-#define UPOWER_PROP_PERCENTAGE    "Percentage"
-#define UPOWER_PROP_TIME_TO_EMPTY "TimeToEmpty"
-#define UPOWER_PROP_TIME_TO_FULL  "TimeToFull"
+#define UPOWER_PROP_SERIAL          "Serial"
+#define UPOWER_PROP_TYPE            "Type"
+#define UPOWER_PROP_POWER_SUPPLY    "PowerSupply"
+#define UPOWER_PROP_STATE           "State"
+#define UPOWER_PROP_PERCENTAGE      "Percentage"
+#define UPOWER_PROP_TIME_TO_EMPTY   "TimeToEmpty"
+#define UPOWER_PROP_TIME_TO_FULL    "TimeToFull"
 
     class PowerDevice
     {

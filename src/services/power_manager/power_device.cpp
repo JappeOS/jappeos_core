@@ -57,6 +57,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             [&] { return DeviceTypeToString(_proxy.GetProperty<uint32_t>(UPOWER_PROP_TYPE)); }
         );
 
+        // PowerSupply
+
+        _iface.RegisterProperty<bool>(
+            JOSPM_PROP_POWER_SUPPLY,
+            [&] { return _proxy.GetProperty<bool>(UPOWER_PROP_POWER_SUPPLY); }
+        );
+
         // State
 
         _iface.RegisterProperty<std::string>(
