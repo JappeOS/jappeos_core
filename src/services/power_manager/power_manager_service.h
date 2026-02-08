@@ -38,8 +38,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         bool _uPower = false;
         std::unordered_map<ObjectPath, std::unique_ptr<PowerDevice>, ObjectPathHash> _devices;
 
-        std::unique_ptr<SignalSubscription> _subNameOwnerChanged;
-
         std::unique_ptr<SignalSubscription> _subDeviceAdded;
         std::unique_ptr<SignalSubscription> _subDeviceRemoved;
 
@@ -52,9 +50,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         void EmitBatteryDeviceAdded(const ObjectPath& path);
         void EmitBatteryDeviceRemoved(const ObjectPath& path);
 
-        void OnNameOwnerChanged(const Message& msg);
-        void OnPowerManagerAppeared();
-        void OnPowerManagerDisappeared();
+        void InitPowerManager();
+        void CleanupPowerManager();
         void DiscoverDevices();
         void SubscribeToPowerManagerSignals();
         void UnsubscribeFromPowerManagerSignals();

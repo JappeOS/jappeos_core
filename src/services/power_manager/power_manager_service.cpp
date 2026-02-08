@@ -31,25 +31,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
                                              _object(*_conn, GetBaseObjectPath()),
                                              _iface(_object.CreateInterface(GetBaseInterface()))
     {
-        _iface.RegisterMethod("Shutdown", [&](const auto& m) { OnShutdown(m); });
-        _iface.RegisterMethod("Reboot",   [&](const auto& m) { OnReboot(m); });
-        _iface.RegisterMethod("Suspend",  [&](const auto& m) { OnSuspend(m); });
+        _iface.RegisterMethod("Shutdown",           [&](const auto& m) { OnShutdown(m); });
+        _iface.RegisterMethod("Reboot",             [&](const auto& m) { OnReboot(m); });
+        _iface.RegisterMethod("Suspend",            [&](const auto& m) { OnSuspend(m); });
+        _iface.RegisterMethod("ListBatteryDevices", [&](const auto& m) { OnListBatteryDevices(m); });
 
-        _subNameOwnerChanged = std::make_unique<SignalSubscription>(_conn->SubscribeSignal(
-            "org.freedesktop.DBus",
-            ObjectPath("/org/freedesktop/DBus"),
-            InterfaceName("org.freedesktop.DBus"),
-            "NameOwnerChanged",
-            [&](const Message& msg)
-            {
-                return OnNameOwnerChanged(msg);
-            }
-        ));
+        InitPowerManager();
     }
 
     PowerManagerService::~PowerManagerService()
     {
-        OnPowerManagerDisappeared();
+        CleanupPowerManager();
     }
 
     std::vector<ObjectPath> PowerManagerService::ListDevices() const
@@ -160,23 +152,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         sig.Send(*_conn);
     }
 
-    void PowerManagerService::OnNameOwnerChanged(const Message& msg)
-    {
-        const auto args = msg.GetArgs<std::string, std::string, std::string>();
-        const auto name = std::get<0>(args);
-        const auto oldOwner = std::get<1>(args);
-        const auto newOwner = std::get<2>(args);
-
-        if (name != "org.freedesktop.UPower")
-            return;
-
-        if (!newOwner.empty())
-            OnPowerManagerAppeared();
-        else
-            OnPowerManagerDisappeared();
-    }
-
-    void PowerManagerService::OnPowerManagerAppeared()
+    void PowerManagerService::InitPowerManager()
     {
         if (_uPower)
             return;
@@ -187,7 +163,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         _uPower = true;
     }
 
-    void PowerManagerService::OnPowerManagerDisappeared()
+    void PowerManagerService::CleanupPowerManager()
     {
         if (!_uPower)
             return;
@@ -213,7 +189,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             "EnumerateDevices"
         );
 
-        const auto args = msg.GetArgs<std::vector<ObjectPath>>();
+        const auto reply = msg.SendWithReply(*_conn);
+        const auto args = reply.GetArgs<std::vector<ObjectPath>>();
         auto objects = std::get<0>(args);
         for (const auto& path: objects)
         {
