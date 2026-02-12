@@ -64,6 +64,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             [&] { return _proxy.GetProperty<bool>(UPOWER_PROP_POWER_SUPPLY); }
         );
 
+        // IsPresent
+
+        _iface.RegisterProperty<bool>(
+            JOSPM_PROP_IS_PRESENT,
+            [&] { return _proxy.GetProperty<bool>(UPOWER_PROP_IS_PRESENT); }
+        );
+
+        _subIsPresent = std::make_unique<SignalSubscription>(_proxy.SubscribePropertyChanged<bool>(
+            UPOWER_PROP_IS_PRESENT,
+            [&](const bool& val) { EmitPropertyChanged(JOSPM_PROP_IS_PRESENT, val); }
+        ));
+
         // State
 
         _iface.RegisterProperty<std::string>(
@@ -71,7 +83,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
             [&] { return DeviceStateToString(_proxy.GetProperty<uint32_t>(UPOWER_PROP_STATE)); }
         );
 
-        _subIsCharging = std::make_unique<SignalSubscription>(_proxy.SubscribePropertyChanged<uint32_t>(
+        _subState = std::make_unique<SignalSubscription>(_proxy.SubscribePropertyChanged<uint32_t>(
             UPOWER_PROP_STATE,
             [&](const uint32_t& val) { EmitPropertyChanged(JOSPM_PROP_STATE, DeviceStateToString(val)); }
         ));

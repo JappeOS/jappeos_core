@@ -25,6 +25,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
 #define JOSPM_PROP_ID                "Id"
 #define JOSPM_PROP_TYPE              "Type"
 #define JOSPM_PROP_POWER_SUPPLY      "PowerSupply"
+#define JOSPM_PROP_IS_PRESENT        "IsPresent"
 #define JOSPM_PROP_STATE             "State"
 #define JOSPM_PROP_CHARGE_PERCENTAGE "ChargePercentage"
 #define JOSPM_PROP_TIME_TO_EMPTY     "TimeToEmpty"
@@ -33,6 +34,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
 #define UPOWER_PROP_SERIAL          "Serial"
 #define UPOWER_PROP_TYPE            "Type"
 #define UPOWER_PROP_POWER_SUPPLY    "PowerSupply"
+#define UPOWER_PROP_IS_PRESENT      "IsPresent"
 #define UPOWER_PROP_STATE           "State"
 #define UPOWER_PROP_PERCENTAGE      "Percentage"
 #define UPOWER_PROP_TIME_TO_EMPTY   "TimeToEmpty"
@@ -64,7 +66,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         InterfaceName _interfaceName;
         Interface&    _iface;
         Proxy         _proxy;
-        std::unique_ptr<SignalSubscription> _subIsCharging;
+        std::unique_ptr<SignalSubscription> _subIsPresent;
+        std::unique_ptr<SignalSubscription> _subState;
         std::unique_ptr<SignalSubscription> _subChargePercentage;
         std::unique_ptr<SignalSubscription> _subTimeToEmpty;
         std::unique_ptr<SignalSubscription> _subTimeToFull;
