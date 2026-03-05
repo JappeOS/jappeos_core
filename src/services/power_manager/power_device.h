@@ -1,6 +1,6 @@
 /*
  * jappeos_core, Core system management daemon for JappeOS.
- * Copyright (C) 2026  Jappe02
+ * Copyright (C) 2026  The JappeOS team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -19,6 +19,7 @@
 #pragma once
 #include "power_manager_service.h"
 #include "../../utils/dbus_utils.h"
+#include "../../logger.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
 {
@@ -50,13 +51,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
                     ObjectPath objectPath,
                     ObjectPath upowerPath);
 
-        /*[[nodiscard]] std::string GetId() const       { return _id.Get(); }
-        [[nodiscard]] std::string GetType() const     { return _type.Get(); }
-        [[nodiscard]] bool GetIsCharging() const      { return _isCharging.Get(); }
-        [[nodiscard]] int GetChargePercentage() const { return _chargePercentage.Get(); }
-        [[nodiscard]] long GetTimeToEmpty() const     { return _timeToEmpty.Get(); }
-        [[nodiscard]] long GetTimeToFull() const      { return _timeToFull.Get(); }*/
-
     protected:
         Connection& _conn;
         ObjectPath  _path;
@@ -71,20 +65,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         std::unique_ptr<SignalSubscription> _subChargePercentage;
         std::unique_ptr<SignalSubscription> _subTimeToEmpty;
         std::unique_ptr<SignalSubscription> _subTimeToFull;
-        /*Prop<std::string> _id;
-        Prop<std::string> _type;
-        Prop<bool>        _isCharging;
-        Prop<int>         _chargePercentage;
-        Prop<long>        _timeToEmpty;
-        Prop<long>        _timeToFull;*/
 
         template<typename T>
         void EmitPropertyChanged(const std::string& property, const T& value)
         {
+            Log().Debug("EmitPropertyChanged on " + property);
             Utils::DBusUtils::EmitPropertyChanged(_conn, _iface, property, value);
         }
 
     private:
+        static JappeOSCore::Logger& Log() {
+            static JappeOSCore::Logger instance{"PowerDevice"};
+            return instance;
+        }
+
         static std::string DeviceTypeToString(const uint32_t value)
         {
             switch (value)

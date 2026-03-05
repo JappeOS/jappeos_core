@@ -1,6 +1,6 @@
 /*
  * jappeos_core, Core system management daemon for JappeOS.
- * Copyright (C) 2026  Jappe02
+ * Copyright (C) 2026  The JappeOS team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -33,16 +33,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
                              _proxy(_conn,
                                 "org.freedesktop.UPower",
                                 std::move(upowerPath),
-                                InterfaceName("org.freedesktop.UPower.Device"))/*,
-                             _id              (_conn, _iface, "Id", ""),
-                             _type            (_conn, _iface, "Type", ""),
-                             _isCharging      (_conn, _iface, "IsCharging", false),
-                             _chargePercentage(_conn, _iface, "ChargePercentage", 0),
-                             _timeToEmpty     (_conn, _iface, "TimeToEmpty", 0),
-                             _timeToFull      (_conn, _iface, "TimeToFull", 0)*/
+                                InterfaceName("org.freedesktop.UPower.Device"))
     {
-        //_id = _proxy.GetProperty<std::string>("Serial");
-
         // Id
 
         _iface.RegisterProperty<std::string>(
