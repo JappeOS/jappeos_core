@@ -48,7 +48,9 @@ add_executable(jappeos_core src/main.cpp
         src/services/network_manager/network_device_def.h
         src/services/network_manager/network_connection_def.h
         src/services/power_manager/power_device.cpp
-        src/services/power_manager/power_device.h)
+        src/services/power_manager/power_device.h
+        src/logger.cpp
+        src/logger.h)
 
 # Add include directories
 target_include_directories(jappeos_core PRIVATE
