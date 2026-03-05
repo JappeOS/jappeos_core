@@ -1,6 +1,6 @@
 /*
  * jappeos_core, Core system management daemon for JappeOS.
- * Copyright (C) 2026  Jappe02
+ * Copyright (C) 2026  The JappeOS team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -763,8 +763,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
             auto temp = Message::CreateMethodReturn(msg);
             prop.getter(temp);
 
-            auto args = temp.GetArgs<DBusVariant>();
-            values.emplace(propName, std::get<0>(args));
+            auto [arg] = temp.GetArgs<DBusVariant>();
+            values.emplace(propName, std::move(arg));
         }
 
         auto reply = Message::CreateMethodReturn(msg);

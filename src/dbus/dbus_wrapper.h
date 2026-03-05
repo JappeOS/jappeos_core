@@ -1,6 +1,6 @@
 /*
  * jappeos_core, Core system management daemon for JappeOS.
- * Copyright (C) 2026  Jappe02
+ * Copyright (C) 2026  The JappeOS team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -32,7 +32,7 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore
 {
-    struct DBusVariant;
+    class DBusVariant;
 
 #define DBUS_DEFAULT_SAFE_TIMEOUT 5000
 
@@ -302,27 +302,65 @@ namespace JappeStudios::JappeOS::JappeOSCore
     /**
      * @brief Represents a D-Bus variant. Contains the signature and value.
      */
-    struct DBusVariant
+    class DBusVariant
     {
-        std::string signature;
-        std::any value;
+    public:
+        DBusVariant(const DBusVariant&) = delete;
+        DBusVariant& operator=(const DBusVariant&) = delete;
 
-        using AppendFn = void(*)(DBusMessageIter&, const std::any&);
-        AppendFn append_fn;
+        DBusVariant(DBusVariant&&) = default;
+        DBusVariant& operator=(DBusVariant&&) = default;
+
+        [[nodiscard]] const std::string& signature() const noexcept
+        {
+            return _signature;
+        }
+
+        template<typename T>
+        const T& get() const
+        {
+            using U = std::decay_t<T>;
+
+            if (_value.type() != typeid(U))
+            {
+                throw DBusException(
+                    DBUS_ERROR_INVALID_SIGNATURE,
+                    "DBusVariant type mismatch"
+                );
+            }
+
+            return std::any_cast<const U&>(_value);
+        }
+
+        void append(DBusMessageIter& it) const
+        {
+            _append(it, _value);
+        }
 
         template<typename T>
         static DBusVariant make(T&& v)
         {
             using U = std::decay_t<T>;
-            return {
-                DBusGetSignature<U>(),
-                std::forward<T>(v),
-                [](DBusMessageIter& it, const std::any& a)
-                {
-                    DBusSetTraits<U>::append(it, std::any_cast<const U&>(a));
-                }
+
+            DBusVariant var;
+            var._signature = DBusGetSignature<U>();
+            var._value = std::forward<T>(v);
+            var._append = [](DBusMessageIter& it, const std::any& a)
+            {
+                DBusSetTraits<U>::append(it, std::any_cast<const U&>(a));
             };
+
+            return var;
         }
+
+    private:
+        DBusVariant() = default;
+
+        std::string _signature;
+        std::any _value;
+
+        using AppendFn = void(*)(DBusMessageIter&, const std::any&);
+        AppendFn _append{};
     };
 
     // ========== SET TRAITS ==========
@@ -536,61 +574,16 @@ namespace JappeStudios::JappeOS::JappeOSCore
             dbus_message_iter_open_container(
                 &it,
                 DBUS_TYPE_VARIANT,
-                v.signature.c_str(),
+                v.signature().c_str(),
                 &sub
             );
 
-            v.append_fn(sub, v.value);
+            v.append(sub);
 
             dbus_message_iter_close_container(&it, &sub);
         }
-
-        /*static void append(DBusMessageIter& it, const DBusVariant& v)
-        {
-            DBusMessageIter sub;
-
-            dbus_message_iter_open_container(
-                &it,
-                DBUS_TYPE_VARIANT,
-                v.signature.c_str(),
-                &sub
-            );
-
-            appendBySignature(sub, v.signature, v.value);
-
-            dbus_message_iter_close_container(&it, &sub);
-        }*/
-
-    /*private:
-        static void appendBySignature(
-            DBusMessageIter& it,
-            const std::string& sig,
-            const std::any& val)
-        {
-            if (sig == "i")
-                DBusSetTraits<int32_t>::append(it, std::any_cast<int32_t>(val));
-            else if (sig == "u")
-                DBusSetTraits<uint32_t>::append(it, std::any_cast<uint32_t>(val));
-            else if (sig == "b")
-                DBusSetTraits<bool>::append(it, std::any_cast<bool>(val));
-            else if (sig == "d")
-                DBusSetTraits<double>::append(it, std::any_cast<double>(val));
-            else if (sig == "s")
-                DBusSetTraits<std::string>::append(it, std::any_cast<std::string>(val));
-            else if (sig == "o")
-                DBusSetTraits<ObjectPath>::append(it, std::any_cast<ObjectPath>(val));
-            else if (sig.starts_with("a"))
-            {
-                throw DBusException(DBUS_ERROR_INVALID_ARGS,
-                    "Container variants must be deserialized with explicit type");
-            }
-            else
-            {
-                throw DBusException(DBUS_ERROR_INVALID_ARGS,
-                    "Unsupported variant signature");
-            }
-        }*/
     };
+
 
 #pragma endregion
 
@@ -833,40 +826,43 @@ namespace JappeStudios::JappeOS::JappeOSCore
             DBusMessageIter sub;
             dbus_message_iter_recurse(&it, &sub);
 
-            char* sig = dbus_message_iter_get_signature(&sub);
+            const int argType = dbus_message_iter_get_arg_type(&sub);
 
-            DBusVariant out;
-            out.signature = sig;
-
-            dbus_free(sig);
-
-            switch (dbus_message_iter_get_arg_type(&sub))
+            DBusVariant result = [&]() -> DBusVariant
             {
-                case DBUS_TYPE_INT32:
-                    out.value = DBusGetTraits<int32_t>::get(sub);
-                    break;
-                case DBUS_TYPE_UINT32:
-                    out.value = DBusGetTraits<uint32_t>::get(sub);
-                    break;
-                case DBUS_TYPE_BOOLEAN:
-                    out.value = DBusGetTraits<bool>::get(sub);
-                    break;
-                case DBUS_TYPE_DOUBLE:
-                    out.value = DBusGetTraits<double>::get(sub);
-                    break;
-                case DBUS_TYPE_STRING:
-                    out.value = DBusGetTraits<std::string>::get(sub);
-                    break;
-                case DBUS_TYPE_OBJECT_PATH:
-                    out.value = DBusGetTraits<ObjectPath>::get(sub);
-                    break;
-                default:
-                    throw DBusException(DBUS_ERROR_INVALID_ARGS,
-                        "Unsupported variant payload");
-            }
+                switch (argType)
+                {
+                    case DBUS_TYPE_BOOLEAN:
+                        return DBusVariant::make(DBusGetTraits<bool>::get(sub));
+
+                    case DBUS_TYPE_INT32:
+                        return DBusVariant::make(DBusGetTraits<int32_t>::get(sub));
+
+                    case DBUS_TYPE_UINT32:
+                        return DBusVariant::make(DBusGetTraits<uint32_t>::get(sub));
+
+                    case DBUS_TYPE_INT64:
+                        return DBusVariant::make(DBusGetTraits<int64_t>::get(sub));
+
+                    case DBUS_TYPE_DOUBLE:
+                        return DBusVariant::make(DBusGetTraits<double>::get(sub));
+
+                    case DBUS_TYPE_STRING:
+                        return DBusVariant::make(DBusGetTraits<std::string>::get(sub));
+
+                    case DBUS_TYPE_OBJECT_PATH:
+                        return DBusVariant::make(DBusGetTraits<ObjectPath>::get(sub));
+
+                    default:
+                        throw DBusException(
+                            DBUS_ERROR_INVALID_ARGS,
+                            "Unsupported variant payload"
+                        );
+                }
+            }();
 
             dbus_message_iter_next(&it);
-            return out;
+            return result;
         }
     };
 
@@ -1152,9 +1148,19 @@ namespace JappeStudios::JappeOS::JappeOSCore
             std::size_t operator()(const SignalKey& k) const noexcept
             {
                 std::size_t h = std::hash<std::string>{}(k.interface.ToString());
-                h ^= std::hash<std::string>{}(k.member) + 0x9e3779b9 + (h << 6) + (h >> 2);
-                h ^= std::hash<std::string>{}(k.path.has_value() ? k.path.value().ToString() : "")
-                    + 0x9e3779b9 + (h << 6) + (h >> 2);
+
+                auto hash_combine = [](std::size_t& seed, std::size_t value)
+                {
+                    seed ^= value + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+                };
+
+                hash_combine(h, std::hash<std::string>{}(k.member));
+
+                hash_combine(h, std::hash<bool>{}(k.path.has_value()));
+
+                if (k.path)
+                    hash_combine(h, std::hash<std::string>{}(k.path->ToString()));
+
                 return h;
             }
         };
@@ -1402,9 +1408,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         template<typename... Args, std::size_t... Is>
         std::tuple<Args...> GetArgsImplHelper(DBusMessageIter& it, std::index_sequence<Is...>) const
         {
-            std::tuple<Args...> result;
-            (..., (std::get<Is>(result) = GetOne<Args>(it)));
-            return result;
+            return std::tuple<Args...>{ GetOne<Args>(it)... };
         }
 
         template<typename T>
@@ -1702,45 +1706,45 @@ namespace JappeStudios::JappeOS::JappeOSCore
         template<typename T, typename Getter, typename Setter = std::nullptr_t>
         void RegisterProperty(std::string name, Getter getter, Setter setter = nullptr)
         {
-            static_assert(std::is_invocable_r_v<T, Getter>,
+            using U = std::decay_t<T>;
+
+            static_assert(std::is_invocable_r_v<U, Getter>,
                           "Getter must be callable and return T");
 
             if constexpr (!std::is_same_v<Setter, std::nullptr_t>)
             {
-                static_assert(std::is_invocable_r_v<void, Setter, const T&>,
+                static_assert(std::is_invocable_r_v<void, Setter, const U&>,
                               "Setter must be callable with (const T&)");
             }
 
-            std::function<T()> getterFn = std::move(getter);
-            std::function<void(const T&)> setterFn;
+            std::function<U()> getterFn = std::move(getter);
+            std::function<void(const U&)> setterFn;
 
             if constexpr (!std::is_same_v<Setter, std::nullptr_t>)
                 setterFn = std::move(setter);
 
             Property prop;
-            prop.name = name;
-
-            // property signature is the inner type
-            prop.signature = DBusSignatureTraits<T>::get();
+            prop.name = std::move(name);
+            prop.signature = DBusSignatureTraits<U>::get();
 
             // GET
             if (getterFn)
             {
                 prop.getter = [getterFn = std::move(getterFn)](Message& reply)
                 {
-                    T value = getterFn();
+                    U value = getterFn();
 
                     // Properties.Get MUST return a variant
-                    const DBusVariant v = DBusVariant::make(std::move(value));
-
-                    reply.SetArgs(v); // TODO: Error
+                    reply.SetArgs(DBusVariant::make(std::move(value)));
                 };
             }
 
             // SET
             if (setterFn)
             {
-                prop.setter = [setterFn = std::move(setterFn), expectedSig = prop.signature](const Message& msg)
+                prop.setter =
+                    [setterFn = std::move(setterFn),
+                     expectedSig = prop.signature](const Message& msg)
                 {
                     // Set(interface, property, variant)
                     const auto args =
@@ -1749,29 +1753,20 @@ namespace JappeStudios::JappeOS::JappeOSCore
                     const DBusVariant& v = std::get<2>(args);
 
                     // Enforce declared property signature
-                    if (v.signature != expectedSig)
+                    if (v.signature() != expectedSig)
                     {
                         throw DBusException(
                             DBUS_ERROR_INVALID_ARGS,
                             "Invalid variant signature for property");
                     }
 
-                    try
-                    {
-                        setterFn(std::any_cast<const T&>(v.value));
-                    }
-                    catch (const std::bad_any_cast&)
-                    {
-                        throw DBusException(
-                            DBUS_ERROR_INVALID_ARGS,
-                            "Invalid variant value for property");
-                    }
+                    setterFn(v.get<U>());
                 };
             }
 
-            auto [it, inserted] = _properties.emplace(name, std::move(prop));
+            auto [it, inserted] = _properties.emplace(prop.name, std::move(prop));
             if (!inserted)
-                throw std::logic_error("Property already exists: " + name);
+                throw std::logic_error("Property already exists: " + prop.name);
         }
 
         /**
@@ -1970,11 +1965,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
                 "PropertiesChanged"
             );
 
+            std::map<std::string, DBusVariant> props;
+            props.try_emplace(_name, DBusVariant::make(_value));
+
             sig.SetArgs(
                 _iface.GetName().ToString(),
-                std::map<std::string, DBusVariant>{
-                    { _name, DBusVariant::make(_value) }
-                },
+                props,
                 std::vector<std::string>{}
             );
 
@@ -2060,6 +2056,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
         template<typename T>
         T GetProperty(const std::string& propertyName)
         {
+            using U = std::decay_t<T>;
+
             auto msg = Message::CreateMethodCall(
                 _busName,
                 _path,
@@ -2071,28 +2069,17 @@ namespace JappeStudios::JappeOS::JappeOSCore
             const auto reply = msg.SendWithReply(_conn);
             auto [variant] = reply.GetArgs<DBusVariant>();
 
-            // Validate signature
-            const char* expectedSig = DBusSignatureTraits<T>::get();
-            if (variant.signature != expectedSig)
+            const char* expectedSig = DBusSignatureTraits<U>::get();
+            if (variant.signature() != expectedSig)
             {
                 throw DBusException(
                     DBUS_ERROR_INVALID_SIGNATURE,
                     "Property type mismatch: expected " + std::string(expectedSig) +
-                    ", got " + variant.signature
+                    ", got " + variant.signature()
                 );
             }
 
-            try
-            {
-                return std::any_cast<T>(variant.value);
-            }
-            catch (const std::bad_any_cast&)
-            {
-                throw DBusException(
-                    DBUS_ERROR_FAILED,
-                    "Failed to cast property value"
-                );
-            }
+            return variant.get<U>();
         }
 
         /**
@@ -2154,9 +2141,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @return Signal subscription (unsubscribes when destroyed)
          */
         template<typename T>
-        [[nodiscard]] SignalSubscription SubscribePropertyChanged(const std::string& property,
-                                                                  const std::function<void(const T&)>& handler) const
+        [[nodiscard]] SignalSubscription SubscribePropertyChanged(
+            const std::string& property,
+            const std::function<void(const T&)>& handler) const
         {
+            using U = std::decay_t<T>;
+
             const SignalHandler newHandler = [&](const Message& msg)
             {
                 const auto args = msg.GetArgs<
@@ -2167,24 +2157,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
                 if (std::get<0>(args) != _iface.ToString())
                     return;
 
-                const auto map = std::get<1>(args);
+                const auto& map = std::get<1>(args);
                 const auto it = map.find(property);
-                if (it == map.end()) return;
+                if (it == map.end())
+                    return;
 
-                T value;
-                try
-                {
-                    value = std::any_cast<T>(it->second.value);
-                }
-                catch (const std::bad_any_cast&)
-                {
-                    throw DBusException(
-                        DBUS_ERROR_FAILED,
-                        "Failed to cast property value"
-                    );
-                }
-
-                handler(value);
+                handler(it->second.get<U>());
             };
 
             return _conn.SubscribeSignal(

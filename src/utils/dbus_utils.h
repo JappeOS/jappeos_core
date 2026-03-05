@@ -1,6 +1,6 @@
 /*
  * jappeos_core, Core system management daemon for JappeOS.
- * Copyright (C) 2026  Jappe02
+ * Copyright (C) 2026  The JappeOS team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -94,11 +94,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Utils
                 "PropertiesChanged"
             );
 
+            std::map<std::string, DBusVariant> props;
+            props.try_emplace(property, DBusVariant::make(value));
+
             sig.SetArgs(
                 iface.GetName().ToString(),
-                std::map<std::string, DBusVariant>{
-                    { property, DBusVariant::make(value) }
-                },
+                props,
                 std::vector<std::string>{}
             );
 
