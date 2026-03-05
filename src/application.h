@@ -1,6 +1,6 @@
 /*
  * jappeos_core, Core system management daemon for JappeOS.
- * Copyright (C) 2026  Jappe02
+ * Copyright (C) 2026  The JappeOS team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -61,6 +61,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
                                 const std::string& message,
                                 const std::string& stack) const;
         [[nodiscard]] bool IsRunning() const { return _shouldRun; }
+        const Services::ServiceManager* GetServiceManager() const { return _serviceManager; }
 
     public:
         static Application* GetInstance()

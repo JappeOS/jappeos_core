@@ -1,6 +1,6 @@
 /*
  * jappeos_core, Core system management daemon for JappeOS.
- * Copyright (C) 2026  Jappe02
+ * Copyright (C) 2026  The JappeOS team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -196,7 +196,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
          * @return A pointer to a service by-type
          */
         template <typename T>
-        std::enable_if_t<std::is_base_of_v<Service, T>, T*> Get()
+        std::enable_if_t<std::is_base_of_v<Service, T>, T*> Get() const
         {
             // Look for a service instance that can be cast to T*
             for (const auto &service: _services | std::views::values)
