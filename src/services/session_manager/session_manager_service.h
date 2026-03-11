@@ -70,13 +70,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     public:
         const bool USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY = false; // TODO: (used for debugging)
-        const char* PAM_GREETER_SERVICE  = "jappeos-greeter";
-        const char* PAM_LOGIN_SERVICE    = "jappeos-login";
-        const char* JOS_DESKTOP_BINARY   = "/jappeos/desktop/desktop";
-        const char* JOS_DESKTOP_NAME     = "JappeOS Desktop";
-        const char* JOS_GREETER_BINARY   = "/jappeos/greeter/greeter";
-        const char* JOS_GREETER_USER     = "jos-greeter";
-        const char* JOS_INSTALLER_BINARY = "/jappeos/installer/installer";
+        const char* JOS_CORE_SESSION_BINARY = "/jappeos/jappeos_session";
+        const char* PAM_GREETER_SERVICE     = "jappeos-greeter";
+        const char* PAM_LOGIN_SERVICE       = "jappeos-login";
+        const char* JOS_DESKTOP_NAME        = "JappeOS Desktop";
+        const char* JOS_GREETER_USER        = "jos-greeter";
+        const char* JOS_INSTALLER_BINARY    = "/jappeos/installer/installer";
 
     private:
         bool CreateLoginSession();

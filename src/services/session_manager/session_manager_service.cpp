@@ -1000,12 +1000,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             auto env3 = "XDG_RUNTIME_DIR=/run/user/" + std::to_string(pwd->pw_uid);
             auto env4 = "XDG_SEAT=" + seat;
             auto env5 = "XDG_SESSION_CLASS=user";
+            auto env6 = "ZENITH_MULTI_MONITOR_MODE=extend";
+            auto env7 = "LIBSEAT_BACKEND=seatd";
 
             if (!dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env1) ||
                 !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env2) ||
                 !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env3) ||
                 !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env4) ||
-                !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env5))
+                !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env5) ||
+                !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env6) ||
+                !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env7))
             {
                 dbus_message_iter_close_container(&variantIter, &arrayIter2);
                 dbus_message_iter_close_container(&structIter, &variantIter);
@@ -1058,7 +1062,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 &innerStructIter
             );
 
-            auto path = "/usr/bin/cage";
+            auto path = JOS_CORE_SESSION_BINARY;
             if (!dbus_message_iter_append_basic(&innerStructIter, DBUS_TYPE_STRING, &path))
             {
                 _logger->Err("Failed to append ExecStart path");
@@ -1078,16 +1082,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 &arrayIter3
             );
 
-            auto arg0 = "/usr/bin/cage";
-            auto arg1 = "-d";
-            auto arg2 = "-s";
-            auto arg3 = "-m last";
-            const char* arg4 = isLoginSession ? JOS_GREETER_BINARY : JOS_DESKTOP_BINARY;
+            const char* arg0 = path;
+            std::string arg1_str = std::string("-t ") + (isLoginSession ? "greeter" : "desktop");
+            const char* arg1 = arg1_str.c_str();
             if (!dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg0) ||
-                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg1) ||
-                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg2) ||
-                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg3) ||
-                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg4))
+                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg1))
             {
                 _logger->Err("Failed to append ExecStart args");
                 dbus_message_iter_close_container(&innerStructIter, &arrayIter3);
