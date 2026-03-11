@@ -45,6 +45,15 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     const char* ApplicationState_ToString(ApplicationState state);
 
+#if defined(JAPPEOS_DAEMON_SESSION)
+    enum class SessionTarget {
+        Desktop,
+        Greeter,
+    };
+
+    const char* SessionTarget_ToString(SessionTarget target);
+#endif
+
     class Application
     {
     public:
@@ -63,6 +72,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
         [[nodiscard]] bool IsRunning() const { return _shouldRun; }
         const Services::ServiceManager* GetServiceManager() const { return _serviceManager; }
 
+#if defined(JAPPEOS_DAEMON_SESSION)
+        void SetSessionTarget(SessionTarget target) { _sessionTarget = target; }
+        [[nodiscard]] SessionTarget GetSessionTarget() const { return _sessionTarget; }
+#endif
+
     public:
         static Application* GetInstance()
         {
@@ -80,6 +94,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
         DBusError*       _err = new DBusError;
         pollfd           _fds[2]{};
         Services::ServiceManager* _serviceManager = nullptr;
+
+#if defined(JAPPEOS_DAEMON_SESSION)
+        SessionTarget _sessionTarget = SessionTarget::Desktop;
+#endif
 
         void Initialize();
         void InitDBus();

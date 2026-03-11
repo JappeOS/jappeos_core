@@ -74,6 +74,7 @@ cmake --build .
 ```
 
 This will produce the `jappeos_core` executable in the `build/` directory.
+It also produces `jappeos_session`, a separate daemon intended for user-session-level services (it uses the D-Bus **session** bus and the `org.jappeos.Session` interface).
 
 For a debug build, use:
 

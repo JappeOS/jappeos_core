@@ -41,8 +41,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services
 {
 #define NO_SETTER() throw DBusException(DBUS_ERROR_PROPERTY_READ_ONLY);
 
+#if defined(JAPPEOS_DAEMON_SYSTEM) && defined(JAPPEOS_DAEMON_SESSION)
+#error "Define only one of JAPPEOS_DAEMON_SYSTEM or JAPPEOS_DAEMON_SESSION."
+#endif
+
+#if defined(JAPPEOS_DAEMON_SESSION)
+#define DBUS_INTERFACE "org.jappeos.Session"
+#define DBUS_PATH      "/org/jappeos/Session"
+#else
 #define DBUS_INTERFACE "org.jappeos.Core"
 #define DBUS_PATH      "/org/jappeos/Core"
+#endif
 
     class ServiceManager;
 

@@ -19,11 +19,20 @@
 #define GENERATE_ENUM_STRINGS
 #include "application.h"
 
-#include "services/account_manager/account_manager_service.h"
+#include <glib.h>
+#include <sstream>
+
 #include "services/session_manager/session_manager_service.h"
 #include "services/watchdog/watchdog_service.h"
+#if defined(JAPPEOS_DAEMON_SESSION)
+#include "services/session_host/session_host_service.h"
+#endif
+#if defined(JAPPEOS_DAEMON_SYSTEM) || !defined(JAPPEOS_DAEMON_SESSION)
+#include "services/account_manager/account_manager_service.h"
+#include "services/session_manager/session_manager_service.h"
 #include "services/network_manager/network_manager_service.h"
 #include "services/power_manager/power_manager_service.h"
+#endif
 #include "utils/jos_exception.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore
@@ -37,6 +46,18 @@ namespace JappeStudios::JappeOS::JappeOSCore
             default: return "Unknown";
         }
     }
+
+#if defined(JAPPEOS_DAEMON_SESSION)
+    const char* SessionTarget_ToString(const SessionTarget target)
+    {
+        switch (target)
+        {
+            case SessionTarget::Desktop: return "desktop";
+            case SessionTarget::Greeter: return "greeter";
+            default: return "unknown";
+        }
+    }
+#endif
 
     Application* Application::s_instance = nullptr;
     volatile std::sig_atomic_t Application::s_signalCaught = 0;
@@ -175,7 +196,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
     void Application::InitDBus()
     {
         dbus_error_init(_err);
+#if defined(JAPPEOS_DAEMON_SESSION)
+        _conn = new Connection(DBUS_BUS_SESSION);
+#else
         _conn = new Connection(DBUS_BUS_SYSTEM);
+#endif
 
         if (dbus_error_is_set(_err))
         {
@@ -199,10 +224,15 @@ namespace JappeStudios::JappeOS::JappeOSCore
     void Application::InitServices() const
     {
         _serviceManager->Register<Services::Watchdog::WatchdogService>();
+#if defined(JAPPEOS_DAEMON_SESSION)
+        _serviceManager->Register<Services::SessionHost::SessionHostService>();
+#endif
+#if defined(JAPPEOS_DAEMON_SYSTEM) || !defined(JAPPEOS_DAEMON_SESSION)
         _serviceManager->Register<Services::SessionManager::SessionManagerService>();
         _serviceManager->Register<Services::AccountManager::AccountManagerService>();
         _serviceManager->Register<Services::PowerManager::PowerManagerService>();
         _serviceManager->Register<Services::NetworkManager::NetworkManagerService>();
+#endif
     }
 
     void Application::Update()

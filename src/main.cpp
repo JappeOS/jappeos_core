@@ -18,9 +18,74 @@
 
 #include "application.h"
 
-int main()
+#include <cstring>
+#include <iostream>
+
+using JappeStudios::JappeOS::JappeOSCore::Application;
+
+#if defined(JAPPEOS_DAEMON_SESSION)
+using JappeStudios::JappeOS::JappeOSCore::SessionTarget;
+#endif
+
+static void PrintUsage(const char* argv0)
 {
-    JappeStudios::JappeOS::JappeOSCore::Application app;
-    const uint8_t exitCode = app.Run();
-    return exitCode;
+#if defined(JAPPEOS_DAEMON_SESSION)
+    std::cerr << "Usage: " << argv0 << " [-t desktop|greeter]\n";
+#else
+    std::cerr << "Usage: " << argv0 << "\n";
+#endif
+}
+
+int main(const int argc, char** argv)
+{
+    Application app;
+
+#if defined(JAPPEOS_DAEMON_SESSION)
+    SessionTarget target = SessionTarget::Desktop;
+    for (int i = 1; i < argc; i++)
+    {
+        const char* arg = argv[i];
+        if (std::strcmp(arg, "-t") == 0 || std::strcmp(arg, "--type") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                return 2;
+            }
+
+            const char* value = argv[++i];
+            if (std::strcmp(value, "desktop") == 0)      target = SessionTarget::Desktop;
+            else if (std::strcmp(value, "greeter") == 0) target = SessionTarget::Greeter;
+            else
+            {
+                std::cerr << "Invalid value for -t/--type: " << value << "\n";
+                PrintUsage(argv[0]);
+                return 2;
+            }
+            continue;
+        }
+
+        std::cerr << "Unknown argument: " << arg << "\n";
+        PrintUsage(argv[0]);
+        return 2;
+    }
+
+    app.SetSessionTarget(target);
+#else
+    for (int i = 1; i < argc; i++)
+    {
+        const char* arg = argv[i];
+        if (std::strcmp(arg, "-t") == 0 || std::strcmp(arg, "--type") == 0)
+        {
+            std::cerr << "Error: -t/--type is only supported by the jappeos_session build.\n";
+            PrintUsage(argv[0]);
+            return 2;
+        }
+        std::cerr << "Unknown argument: " << arg << "\n";
+        PrintUsage(argv[0]);
+        return 2;
+    }
+#endif
+
+    return app.Run();
 }
