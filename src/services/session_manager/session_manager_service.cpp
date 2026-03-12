@@ -994,14 +994,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             dbus_message_iter_open_container(&variantIter, DBUS_TYPE_ARRAY, "s", &arrayIter2);
 
             // Keep C++ strings in scope until we've appended them
-            auto env1 = "XDG_SESSION_TYPE=wayland";
+            auto env1 = "XDG_SESSION_TYPE=tty";
             std::string de = "XDG_CURRENT_DESKTOP=" + std::string(JOS_DESKTOP_NAME);
             const char* env2 = de.c_str();
             auto env3 = "XDG_RUNTIME_DIR=/run/user/" + std::to_string(pwd->pw_uid);
             auto env4 = "XDG_SEAT=" + seat;
             auto env5 = "XDG_SESSION_CLASS=user";
             auto env6 = "ZENITH_MULTI_MONITOR_MODE=extend";
-            auto env7 = "LIBSEAT_BACKEND=seatd";
+            auto env7 = "LIBSEAT_BACKEND=logind";
 
             if (!dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env1) ||
                 !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env2) ||
@@ -1083,10 +1083,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             );
 
             const char* arg0 = path;
-            std::string arg1_str = std::string("-t ") + (isLoginSession ? "greeter" : "desktop");
-            const char* arg1 = arg1_str.c_str();
+            const char* arg1 = "-t";
+            const char* arg2 = isLoginSession ? "greeter" : "desktop";
             if (!dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg0) ||
-                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg1))
+                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg1) ||
+                !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg2))
             {
                 _logger->Err("Failed to append ExecStart args");
                 dbus_message_iter_close_container(&innerStructIter, &arrayIter3);

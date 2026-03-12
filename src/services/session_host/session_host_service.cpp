@@ -21,6 +21,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <poll.h>
@@ -57,6 +58,26 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionHost
         const int flags = fcntl(fd, F_GETFL, 0);
         if (flags < 0) return;
         (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
+    static std::string Dirname(const std::string& path)
+    {
+        const auto pos = path.rfind('/');
+        if (pos == std::string::npos) return ".";
+        if (pos == 0) return "/";
+        return path.substr(0, pos);
+    }
+
+    static void PrependEnvPath(const char* name, const std::string& prefix)
+    {
+        const char* old = getenv(name);
+        std::string value = prefix;
+        if (old && *old)
+        {
+            value.push_back(':');
+            value.append(old);
+        }
+        (void)setenv(name, value.c_str(), 1);
     }
 
     static bool WriteAll(int fd, const char* buf, size_t len)
@@ -172,6 +193,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionHost
             CloseFd(outPipe[1]);
             CloseFd(errPipe[0]);
             CloseFd(errPipe[1]);
+
+            // Match the current bundle launcher script behavior:
+            // - LD_LIBRARY_PATH: prepend "<DIR>/lib"
+            // - PATH: prepend "<DIR>/bin"
+            const std::string dir = Dirname(_path);
+            PrependEnvPath("LD_LIBRARY_PATH", dir + "/lib");
+            PrependEnvPath("PATH", dir + "/bin");
 
             execl(_path.c_str(), _path.c_str(), nullptr);
             _exit(127);
