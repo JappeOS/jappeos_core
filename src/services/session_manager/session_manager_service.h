@@ -76,6 +76,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const char* JOS_DESKTOP_NAME        = "JappeOS Desktop";
         const char* JOS_GREETER_USER        = "jos-greeter";
         const char* JOS_INSTALLER_BINARY    = "/jappeos/installer/installer";
+        const char* JOS_DESKTOP_BINARY      = "/jappeos/desktop/desktop";
+        const char* JOS_GREETER_BINARY      = "/jappeos/greeter/greeter";
 
     private:
         bool CreateLoginSession();

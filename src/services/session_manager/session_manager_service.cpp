@@ -875,6 +875,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return true;
     }
 
+    // TODO: Summon and destroy both the compositor and session manager processes here. Also add retry-on-error.
     bool SessionManagerService::SpawnUserSessionProcesses(bool isLoginSession,
                                                           const std::string& username,
                                                           const std::string& sessionId,
@@ -976,6 +977,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return false;
         }
 
+        auto path = isLoginSession ? JOS_GREETER_BINARY : JOS_DESKTOP_BINARY;
+        auto pathStr = std::string(path);
+
         // Environment (string array)
         {
             auto key = "Environment";
@@ -994,14 +998,26 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             dbus_message_iter_open_container(&variantIter, DBUS_TYPE_ARRAY, "s", &arrayIter2);
 
             // Keep C++ strings in scope until we've appended them
-            auto env1 = "XDG_SESSION_TYPE=tty";
+            const char* env1 = "XDG_SESSION_TYPE=wayland";
             std::string de = "XDG_CURRENT_DESKTOP=" + std::string(JOS_DESKTOP_NAME);
             const char* env2 = de.c_str();
-            auto env3 = "XDG_RUNTIME_DIR=/run/user/" + std::to_string(pwd->pw_uid);
-            auto env4 = "XDG_SEAT=" + seat;
-            auto env5 = "XDG_SESSION_CLASS=user";
-            auto env6 = "ZENITH_MULTI_MONITOR_MODE=extend";
-            auto env7 = "LIBSEAT_BACKEND=logind";
+            auto env3str = "XDG_RUNTIME_DIR=/run/user/" + std::to_string(pwd->pw_uid);
+            const char* env3 = env3str.c_str();
+            auto env4str = "XDG_SEAT=" + seat;
+            const char* env4 = env4str.c_str();
+            const char* env5 = "XDG_SESSION_CLASS=user";
+            const char* env6 = "ZENITH_MULTI_MONITOR_MODE=extend";
+            const char* env7 = "LIBSEAT_BACKEND=seatd";
+
+            // TODO: Verify this works
+            // LD_LIBRARY_PATH=/usr/lib:/lib:/jappeos/greeter/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+            auto lib = pathStr.substr(0, pathStr.find_last_of('/')) + "/lib";
+            auto bin = pathStr.substr(0, pathStr.find_last_of('/')) + "/bin";
+            auto env8str = std::vformat("LD_LIBRARY_PATH=/usr/lib:/lib:{}", std::make_format_args(lib));
+            //auto env8str = "LD_LIBRARY_PATH=" + pathStr.substr(0, pathStr.find_last_of('/')) + "/lib";
+            const char* env8 = env8str.c_str();
+            auto env9str = std::vformat("PATH={}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", std::make_format_args(bin));
+            const char* env9 = env9str.c_str();
 
             if (!dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env1) ||
                 !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env2) ||
@@ -1009,7 +1025,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env4) ||
                 !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env5) ||
                 !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env6) ||
-                !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env7))
+                !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env7) ||
+                !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env8) ||
+                !dbus_message_iter_append_basic(&arrayIter2, DBUS_TYPE_STRING, &env9))
             {
                 dbus_message_iter_close_container(&variantIter, &arrayIter2);
                 dbus_message_iter_close_container(&structIter, &variantIter);
@@ -1062,7 +1080,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 &innerStructIter
             );
 
-            auto path = JOS_CORE_SESSION_BINARY;
+            //auto path = isLoginSession ? "/jappeos/greeter/greeter" : "/jappeos/desktop/desktop";
+            //auto path = JOS_CORE_SESSION_BINARY;
             if (!dbus_message_iter_append_basic(&innerStructIter, DBUS_TYPE_STRING, &path))
             {
                 _logger->Err("Failed to append ExecStart path");
@@ -1082,12 +1101,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 &arrayIter3
             );
 
-            const char* arg0 = path;
+            // TODO:
+            /*const char* arg0 = path;
             const char* arg1 = "-t";
             const char* arg2 = isLoginSession ? "greeter" : "desktop";
             if (!dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg0) ||
                 !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg1) ||
                 !dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg2))
+            {*/
+            const char* arg0 = path;
+            if (!dbus_message_iter_append_basic(&arrayIter3, DBUS_TYPE_STRING, &arg0))
             {
                 _logger->Err("Failed to append ExecStart args");
                 dbus_message_iter_close_container(&innerStructIter, &arrayIter3);
