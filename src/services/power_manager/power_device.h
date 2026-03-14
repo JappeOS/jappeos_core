@@ -74,7 +74,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         }
 
     private:
-        static JappeOSCore::Logger& Log() {
+        static JappeOSCore::Logger& Log()
+        {
             static JappeOSCore::Logger instance{"PowerDevice"};
             return instance;
         }
