@@ -223,6 +223,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
     };
 
     template<>
+    struct DBusSignatureTraits<uint64_t>
+    {
+        static const char* get() { return "t"; }
+    };
+
+    template<>
     struct DBusSignatureTraits<std::string>
     {
         static const char* get() { return "s"; }
@@ -402,6 +408,16 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         static constexpr int type = DBUS_TYPE_INT64;
         static void append(DBusMessageIter& it, const long& v)
+        {
+            AppendValue(it, type, &v);
+        }
+    };
+
+    template<>
+    struct DBusSetTraits<uint64_t>
+    {
+        static constexpr int type = DBUS_TYPE_UINT64;
+        static void append(DBusMessageIter& it, const uint64_t& v)
         {
             AppendValue(it, type, &v);
         }
@@ -639,6 +655,19 @@ namespace JappeStudios::JappeOS::JappeOSCore
         static long get(DBusMessageIter& it)
         {
             long v;
+            dbus_message_iter_get_basic(&it, &v);
+            dbus_message_iter_next(&it);
+            return v;
+        }
+    };
+
+    template<>
+    struct DBusGetTraits<uint64_t>
+    {
+        static constexpr int type = DBUS_TYPE_UINT64;
+        static uint64_t get(DBusMessageIter& it)
+        {
+            uint64_t v;
             dbus_message_iter_get_basic(&it, &v);
             dbus_message_iter_next(&it);
             return v;
