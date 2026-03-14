@@ -17,52 +17,94 @@
  */
 
 #pragma once
-#include <cstdint>
 
 #include "../service.h"
+#include "../../logger.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 {
-    struct DBusValue
-    {
-        int dbusType;             // D-Bus type (e.g. DBUS_TYPE_STRING)
-        std::string signature;    // Variant signature ("s", "i", etc.)
-        std::variant<std::monostate, int32_t, std::uint32_t, bool, double, std::string> value;
-    };
-
     class AccountManagerService : public Service
     {
     public:
         explicit AccountManagerService(ServiceManager* serviceManager, Connection* conn);
         ~AccountManagerService() override;
-
-        bool HandleMethodCallLegacy(DBusMessage* msg) override;
         [[nodiscard]] std::string GetName() const override { return "AccountManagerService"; }
 
+    public:
+        const std::vector<std::string> USER_GROUPS = {
+            "seat",
+            "video",
+            "render",
+            "input",
+        };
+
     private:
-        void CreateInitialUserWithPasswordDbus(DBusMessage* pmsg,
-                                               uid_t senderUid,
-                                               pid_t senderPid,
-                                               const std::string& username,
-                                               const std::string& realName,
-                                               const std::string& cryptedPassword);
-        void AddUserDbus(DBusMessage* pmsg,
-                         uid_t senderUid,
-                         pid_t senderPid,
-                         const std::string& username,
-                         const std::string& realName);
-        bool AddUser(const std::string& username,
-                     const std::string& realName,
-                     std::string& outObjectPath,
-                     bool cache = true) const;
-        void RemoveUser(DBusMessage* pmsg, uid_t senderUid, pid_t senderPid);
-        void ListUsersDbus(DBusMessage* pmsg);
-        bool ListUsers(std::vector<std::string>& outObjectPaths) const;
-        void GetUserPropertyDbus(DBusMessage* pmsg, const std::string& userObject, const std::string& property);
-        bool GetUserProperty(const std::string& userObject, const std::string& property, DBusValue& outValue) const;
-        [[nodiscard]] bool CacheUser(const std::string& username) const;
-        [[nodiscard]] bool SetUserPassword(const std::string& userObjectPath,
-                                           const std::string& cryptedPassword,
-                                           const std::string& hint) const;
+        Object _object;
+        Interface& _iface;
+
+        // D-Bus interface
+
+        void SharedPolicy(const Message& message) const;
+
+        void OnCreateInitialUserWithPassword(const Message& message) const;
+        void OnListUsers(const Message& message) const;
+        void OnGetUserProperty(const Message& message) const;
+
+        // Internal methods
+
+        ObjectPath AddUser(const std::string& username,
+                           const std::string& realName,
+                           bool cache = true) const;
+        void RemoveUser(int64_t id, bool removeFiles) const;
+        std::vector<ObjectPath> ListUsers() const;
+
+        template<typename T>
+        T GetUserProperty(const ObjectPath& userObject, const std::string& property) const
+        {
+            auto fwdMsg = Message::CreateMethodCall(
+                "org.freedesktop.Accounts",
+                userObject,
+                InterfaceName("org.freedesktop.DBus.Properties"),
+                "Get"
+            );
+
+            fwdMsg.SetArgs(std::string("org.freedesktop.Accounts.User"), property);
+            const auto reply = fwdMsg.SendWithReply(*_conn);
+            const auto args = reply.GetArgs<DBusVariant>();
+            return std::get<0>(args).get<T>();
+        }
+
+        void CacheUser(const std::string& username) const;
+        void SetUserPassword(const ObjectPath& userObject,
+                             const std::string& cryptedPassword,
+                             const std::string& hint) const;
+        void SetUserGroups(const std::string& username) const;
+
+    private:
+        /**
+         * @brief Represents the result of attempting to add a user to a single group.
+         */
+        struct GroupAddResult
+        {
+            std::string group;
+            bool        skippedNonexistent; // Group doesn't exist on this system
+            bool        alreadyMember;      // User was already in the group
+        };
+
+        static JappeOSCore::Logger& Log()
+        {
+            static JappeOSCore::Logger instance{"AccountManagerService"};
+            return instance;
+        }
+
+        /**
+         * @brief Adds 'username' to 'groupname' by rewriting /etc/group via the standard
+         *        fgetgrent_r / putgrent POSIX API. Must be run as root (or with CAP_SETGID).
+         *
+         * @return a GroupAddResult describing what happened.
+         * @throws std::runtime_error on hard failures (I/O errors, user not found, etc.)
+         */
+        static GroupAddResult AddUserToGroup(const std::string& username,
+                                             const std::string& groupname);
     };
 }
