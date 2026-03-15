@@ -19,7 +19,8 @@
 #include "account_manager_service.h"
 #include "../../utils/dbus_utils.h"
 #include "../logger/logger_service.h"
-#include "../session_manager/session_manager_service.h"
+#include "../session_manager/session_manager_service_new.h"
+#include <cerrno>
 #include <grp.h>
 #include <pwd.h>
 #include <sys/types.h>
@@ -48,7 +49,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         const auto senderUid = _conn->GetUnixUser(sender);
         const pid_t senderPid = Utils::DBusUtils::GetSenderPID(_rawConn, message.GetRawMessage());
 
-        const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
+        const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerServiceNew>();
 
         if (!sessionMgr->IsManagedUserSession(senderUid))
         {
@@ -63,6 +64,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
     void AccountManagerService::OnCreateInitialUserWithPassword(const Message& message) const
     {
+        SharedPolicy(message);
         const auto [username, realName, cryptedPassword]
                 = message.GetArgs<std::string, std::string, std::string>();
 
@@ -88,7 +90,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         {
             SetUserPassword(user, cryptedPassword, "");
         }
-        catch (std::exception& e)
+        catch (const std::exception& e)
         {
             Log().Err(std::format("Failed to set password of user `{}`: {}", username, e.what()));
             const auto id = GetUserProperty<uint64_t>(user, "Uid");
@@ -101,6 +103,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
     void AccountManagerService::OnListUsers(const Message& message) const
     {
+        SharedPolicy(message);
         const auto users = ListUsers();
         auto reply = Message::CreateMethodReturn(message);
         reply.SetArgs(users);
@@ -109,6 +112,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
     void AccountManagerService::OnGetUserProperty(const Message& message) const
     {
+        SharedPolicy(message);
         const auto [userObject, property] = message.GetArgs<ObjectPath, std::string>();
 
         auto fwdMsg = Message::CreateMethodCall(
@@ -234,7 +238,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
                         )
                     );
             }
-            catch (std::exception& e)
+            catch (const std::exception& e)
             {
                 Log().Err(std::format(
                     "Failed to add user `{}` to group `{}`: {}",
@@ -245,7 +249,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
     }
 
     AccountManagerService::GroupAddResult AccountManagerService::AddUserToGroup(const std::string& username,
-                                                                                      const std::string& groupname)
+                                                                                const std::string& groupname)
     {
         // --- 1. Resolve the user's UID to validate they exist ---
         passwd  pwdBuf{};
@@ -315,9 +319,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         FILE* tmp = fopen(tmpPath.c_str(), "w");
         if (!tmp)
         {
+            const int saved_errno = errno;
             fclose(grf);
             throw std::runtime_error(
-                std::format("fopen({}) for write: {}", tmpPath, strerror(errno)));
+                std::format("fopen({}) for write: {}", tmpPath, strerror(saved_errno)));
         }
 
         group lineBuf{};
@@ -327,18 +332,33 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
         while (true)
         {
-            errno = 0;
-            int ret = fgetgrent_r(grf, &lineBuf,
-                                  lineStrbuf.data(), lineStrbuf.size(),
-                                  &lineResult);
-            if (ret != 0)
+            const int ret = fgetgrent_r(grf, &lineBuf,
+                                        lineStrbuf.data(), lineStrbuf.size(),
+                                        &lineResult);
+
+            if (ret == 0)
             {
-                if (errno == 0) break; // EOF
+                if (!lineResult)
+                    break; // EOF
+            }
+            else if (ret == ENOENT && !lineResult)
+            {
+                // Some libcs return ENOENT at EOF for fgetgrent_r.
+                break;
+            }
+            else if (ret == ERANGE)
+            {
+                // Buffer too small; grow and retry.
+                lineStrbuf.resize(lineStrbuf.size() * 2);
+                continue;
+            }
+            else
+            {
                 fclose(grf);
                 fclose(tmp);
                 unlink(tmpPath.c_str());
                 throw std::runtime_error(
-                    std::format("fgetgrent_r failed: {}", strerror(errno)));
+                    std::format("fgetgrent_r(/etc/group) failed: {}", strerror(ret)));
             }
 
             // Rewrite our target group with the updated member list.
@@ -350,12 +370,32 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
             if (putgrent(lineResult, tmp) != 0)
             {
+                const int saved_errno = errno;
                 fclose(grf);
                 fclose(tmp);
                 unlink(tmpPath.c_str());
                 throw std::runtime_error(
-                    std::format("putgrent failed: {}", strerror(errno)));
+                    std::format("putgrent failed: {}", strerror(saved_errno)));
             }
+        }
+
+        // If the group exists via NSS but not in /etc/group (e.g. vendor/system groups),
+        // create/override an entry in /etc/group with the updated member list.
+        if (!written)
+        {
+            if (!grpResult->gr_passwd)
+                grpResult->gr_passwd = const_cast<char*>("x");
+
+            if (putgrent(grpResult, tmp) != 0)
+            {
+                const int saved_errno = errno;
+                fclose(grf);
+                fclose(tmp);
+                unlink(tmpPath.c_str());
+                throw std::runtime_error(
+                    std::format("putgrent failed while appending: {}", strerror(saved_errno)));
+            }
+            written = true;
         }
 
         fclose(grf);
@@ -368,19 +408,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         }
         fclose(tmp);
 
-        if (!written)
-        {
-            unlink(tmpPath.c_str());
-            throw std::runtime_error(
-                std::format("Group '{}' not found during rewrite pass", groupname));
-        }
-
         // Atomic replace - rename(2) is atomic on Linux for same-filesystem paths.
         if (rename(tmpPath.c_str(), "/etc/group") != 0)
         {
+            const int saved_errno = errno;
             unlink(tmpPath.c_str());
             throw std::runtime_error(
-                std::format("rename({} -> /etc/group): {}", tmpPath, strerror(errno)));
+                std::format("rename({} -> /etc/group): {}", tmpPath, strerror(saved_errno)));
         }
 
         return {groupname, false, false};
