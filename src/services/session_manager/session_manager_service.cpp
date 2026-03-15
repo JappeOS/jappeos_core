@@ -1007,7 +1007,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             const char* env4 = env4str.c_str();
             const char* env5 = "XDG_SESSION_CLASS=user";
             const char* env6 = "ZENITH_MULTI_MONITOR_MODE=extend";
-            const char* env7 = "LIBSEAT_BACKEND=seatd";
+            const char* env7 = "LIBSEAT_BACKEND=logind";
 
             // TODO: Verify this works
             // LD_LIBRARY_PATH=/usr/lib:/lib:/jappeos/greeter/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
