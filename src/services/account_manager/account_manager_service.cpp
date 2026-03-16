@@ -19,7 +19,7 @@
 #include "account_manager_service.h"
 #include "../../utils/dbus_utils.h"
 #include "../logger/logger_service.h"
-#include "../session_manager/session_manager_service_new.h"
+#include "../session_manager/session_manager_service.h"
 #include <cerrno>
 #include <grp.h>
 #include <pwd.h>
@@ -49,7 +49,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         const auto senderUid = _conn->GetUnixUser(sender);
         const pid_t senderPid = Utils::DBusUtils::GetSenderPID(_rawConn, message.GetRawMessage());
 
-        const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerServiceNew>();
+        const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
 
         if (!sessionMgr->IsManagedUserSession(senderUid))
         {
