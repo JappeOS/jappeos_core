@@ -33,8 +33,6 @@ set(JAPPEOS_COMMON_SOURCES
 )
 
 set(JAPPEOS_SYSTEM_SOURCES
-        src/services/session_manager/session_manager_service.h
-        src/services/session_manager/session_manager_service.cpp
         src/services/account_manager/account_manager_service.cpp
         src/services/account_manager/account_manager_service.h
         src/services/power_manager/power_manager_service.cpp
@@ -55,6 +53,9 @@ set(JAPPEOS_SYSTEM_SOURCES
         src/services/installer/installer_service.h
         src/services/bsod/bsod_service.cpp
         src/services/bsod/bsod_service.h
+        src/services/session_manager/session_manager_service.cpp
+        src/services/session_manager/session_manager_service.h
+        src/utils/scope_guard.h
 )
 
 set(JAPPEOS_SESSION_SOURCES
