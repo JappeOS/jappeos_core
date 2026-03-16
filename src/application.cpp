@@ -22,7 +22,6 @@
 #include <glib.h>
 #include <sstream>
 
-#include "services/session_manager/session_manager_service.h"
 #include "services/watchdog/watchdog_service.h"
 #if defined(JAPPEOS_DAEMON_SESSION)
 #include "services/session_host/session_host_service.h"
