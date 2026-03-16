@@ -18,6 +18,7 @@
 
 #pragma once
 #include <any>
+#include <cstddef>
 #include <cstdint>
 #include <ctime>
 #include <functional>
@@ -27,12 +28,18 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <typeinfo>
+#include <type_traits>
+#include <utility>
 #include <vector>
 #include <dbus/dbus.h>
 
 namespace JappeStudios::JappeOS::JappeOSCore
 {
     class DBusVariant;
+    struct DBusStruct;
+    using DBusStructPtr = std::shared_ptr<const DBusStruct>;
 
 #define DBUS_DEFAULT_SAFE_TIMEOUT 5000
 
@@ -40,6 +47,14 @@ namespace JappeStudios::JappeOS::JappeOSCore
     class Interface;
     template<typename>
     inline constexpr bool alwaysFalse = false;
+
+    template<typename T>
+    struct isStdTuple : std::false_type
+    {};
+
+    template<typename... Ts>
+    struct isStdTuple<std::tuple<Ts...>> : std::true_type
+    {};
 
     /**
      * @brief Exception type for D-Bus errors.
@@ -323,20 +338,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         }
 
         template<typename T>
-        const T& get() const
-        {
-            using U = std::decay_t<T>;
-
-            if (_value.type() != typeid(U))
-            {
-                throw DBusException(
-                    DBUS_ERROR_INVALID_SIGNATURE,
-                    "DBusVariant type mismatch"
-                );
-            }
-
-            return std::any_cast<const U&>(_value);
-        }
+        const T& get() const;
 
         void append(DBusMessageIter& it) const
         {
@@ -359,15 +361,113 @@ namespace JappeStudios::JappeOS::JappeOSCore
             return var;
         }
 
+        template<typename T>
+        static DBusVariant makeWithSignature(std::string signature, T&& v)
+        {
+            using U = std::decay_t<T>;
+
+            DBusVariant var;
+            var._signature = std::move(signature);
+            var._value = std::forward<T>(v);
+            var._append = [](DBusMessageIter& it, const std::any& a)
+            {
+                DBusSetTraits<U>::append(it, std::any_cast<const U&>(a));
+            };
+
+            return var;
+        }
+
     private:
         DBusVariant() = default;
 
         std::string _signature;
         std::any _value;
+        mutable std::any _tupleCache;
+        mutable const std::type_info* _tupleCacheType{};
 
         using AppendFn = void(*)(DBusMessageIter&, const std::any&);
         AppendFn _append{};
     };
+
+    struct DBusStruct
+    {
+        std::vector<DBusVariant> fields;
+    };
+
+    template<typename Tuple, std::size_t... Is>
+    static Tuple TupleFromStructImpl(const DBusStruct& s, std::index_sequence<Is...>)
+    {
+        return Tuple{
+            std::tuple_element_t<Is, Tuple>{
+                s.fields[Is].template get<std::tuple_element_t<Is, Tuple>>()
+            }...
+        };
+    }
+
+    template<typename Tuple>
+    static Tuple TupleFromStruct(const DBusStruct& s)
+    {
+        return TupleFromStructImpl<Tuple>(
+            s,
+            std::make_index_sequence<std::tuple_size<Tuple>::value>{}
+        );
+    }
+
+    template<typename T>
+    const T& DBusVariant::get() const
+    {
+        using U = std::decay_t<T>;
+
+        if constexpr (isStdTuple<U>::value)
+        {
+            if (_value.type() == typeid(U))
+                return std::any_cast<const U&>(_value);
+
+            if (_tupleCacheType == &typeid(U))
+                return std::any_cast<const U&>(_tupleCache);
+
+            if (_value.type() == typeid(DBusStructPtr))
+            {
+                const auto& structPtr = std::any_cast<const DBusStructPtr&>(_value);
+                if (!structPtr)
+                {
+                    throw DBusException(
+                        DBUS_ERROR_INVALID_ARGS,
+                        "DBusVariant struct payload is null"
+                    );
+                }
+
+                if (structPtr->fields.size() != std::tuple_size<U>::value)
+                {
+                    throw DBusException(
+                        DBUS_ERROR_INVALID_ARGS,
+                        "DBusVariant struct arity mismatch"
+                    );
+                }
+
+                _tupleCache = TupleFromStruct<U>(*structPtr);
+                _tupleCacheType = &typeid(U);
+                return std::any_cast<const U&>(_tupleCache);
+            }
+
+            throw DBusException(
+                DBUS_ERROR_INVALID_SIGNATURE,
+                "DBusVariant type mismatch"
+            );
+        }
+        else
+        {
+            if (_value.type() != typeid(U))
+            {
+                throw DBusException(
+                    DBUS_ERROR_INVALID_SIGNATURE,
+                    "DBusVariant type mismatch"
+                );
+            }
+
+            return std::any_cast<const U&>(_value);
+        }
+    }
 
     // ========== SET TRAITS ==========
 #pragma region SetTraits
@@ -575,6 +675,28 @@ namespace JappeStudios::JappeOS::JappeOSCore
             }, t);
 
             dbus_message_iter_close_container(&it, &sub);
+        }
+    };
+
+    template<>
+    struct DBusSetTraits<DBusStructPtr>
+    {
+        static constexpr int type = DBUS_TYPE_STRUCT;
+
+        static void append(DBusMessageIter& it, const DBusStructPtr& s)
+        {
+            if (!s)
+                throw DBusException(DBUS_ERROR_INVALID_ARGS, "Null struct payload");
+
+            DBusMessageIter sub;
+            if (!dbus_message_iter_open_container(&it, type, nullptr, &sub))
+                throw DBusException(DBUS_ERROR_FAILED, "open_container(struct) failed");
+
+            for (const auto& f : s->fields)
+                f.append(sub);
+
+            if (!dbus_message_iter_close_container(&it, &sub))
+                throw DBusException(DBUS_ERROR_FAILED, "close_container(struct) failed");
         }
     };
 
@@ -855,43 +977,75 @@ namespace JappeStudios::JappeOS::JappeOSCore
             DBusMessageIter sub;
             dbus_message_iter_recurse(&it, &sub);
 
-            const int argType = dbus_message_iter_get_arg_type(&sub);
-
-            DBusVariant result = [&]() -> DBusVariant
-            {
-                switch (argType)
-                {
-                    case DBUS_TYPE_BOOLEAN:
-                        return DBusVariant::make(DBusGetTraits<bool>::get(sub));
-
-                    case DBUS_TYPE_INT32:
-                        return DBusVariant::make(DBusGetTraits<int32_t>::get(sub));
-
-                    case DBUS_TYPE_UINT32:
-                        return DBusVariant::make(DBusGetTraits<uint32_t>::get(sub));
-
-                    case DBUS_TYPE_INT64:
-                        return DBusVariant::make(DBusGetTraits<int64_t>::get(sub));
-
-                    case DBUS_TYPE_DOUBLE:
-                        return DBusVariant::make(DBusGetTraits<double>::get(sub));
-
-                    case DBUS_TYPE_STRING:
-                        return DBusVariant::make(DBusGetTraits<std::string>::get(sub));
-
-                    case DBUS_TYPE_OBJECT_PATH:
-                        return DBusVariant::make(DBusGetTraits<ObjectPath>::get(sub));
-
-                    default:
-                        throw DBusException(
-                            DBUS_ERROR_INVALID_ARGS,
-                            "Unsupported variant payload"
-                        );
-                }
-            }();
+            DBusVariant result = ReadValue(sub);
 
             dbus_message_iter_next(&it);
             return result;
+        }
+
+    private:
+        static DBusVariant ReadStruct(DBusMessageIter& it)
+        {
+            DBusMessageIter sub;
+            dbus_message_iter_recurse(&it, &sub);
+
+            std::vector<DBusVariant> fields;
+            while (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID)
+            {
+                fields.push_back(ReadValue(sub));
+            }
+
+            dbus_message_iter_next(&it);
+
+            auto structPtr = std::make_shared<DBusStruct>(DBusStruct{std::move(fields)});
+
+            std::string signature = "(";
+            for (const auto& f : structPtr->fields)
+                signature += f.signature();
+            signature += ")";
+
+            return DBusVariant::makeWithSignature(std::move(signature), DBusStructPtr{std::move(structPtr)});
+        }
+
+        static DBusVariant ReadValue(DBusMessageIter& it)
+        {
+            const int argType = dbus_message_iter_get_arg_type(&it);
+
+            switch (argType)
+            {
+                case DBUS_TYPE_BOOLEAN:
+                    return DBusVariant::make(DBusGetTraits<bool>::get(it));
+
+                case DBUS_TYPE_INT32:
+                    return DBusVariant::make(DBusGetTraits<int32_t>::get(it));
+
+                case DBUS_TYPE_UINT32:
+                    return DBusVariant::make(DBusGetTraits<uint32_t>::get(it));
+
+                case DBUS_TYPE_INT64:
+                    return DBusVariant::make(DBusGetTraits<int64_t>::get(it));
+
+                case DBUS_TYPE_DOUBLE:
+                    return DBusVariant::make(DBusGetTraits<double>::get(it));
+
+                case DBUS_TYPE_UINT64:
+                    return DBusVariant::make(DBusGetTraits<uint64_t>::get(it));
+
+                case DBUS_TYPE_STRING:
+                    return DBusVariant::make(DBusGetTraits<std::string>::get(it));
+
+                case DBUS_TYPE_OBJECT_PATH:
+                    return DBusVariant::make(DBusGetTraits<ObjectPath>::get(it));
+
+                case DBUS_TYPE_STRUCT:
+                    return ReadStruct(it);
+
+                default:
+                    throw DBusException(
+                        DBUS_ERROR_INVALID_ARGS,
+                        "Unsupported variant payload"
+                    );
+            }
         }
     };
 
@@ -1532,12 +1686,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
             {
                 return fn();
             }
-            catch (DBusException& e)
+            catch (const DBusException& e)
             {
                 const auto reply = Message::CreateError(msg, e.GetCode(), e.GetMsg());
                 reply.Send(conn);
             }
-            catch (std::exception& e)
+            catch (const std::exception& e)
             {
                 const auto what = e.what();
                 const auto reply = Message::CreateError(
@@ -2171,23 +2325,26 @@ namespace JappeStudios::JappeOS::JappeOSCore
          */
         template<typename T>
         [[nodiscard]] SignalSubscription SubscribePropertyChanged(
-            const std::string& property,
-            const std::function<void(const T&)>& handler) const
+            std::string property,
+            std::function<void(const T&)> handler) const
         {
             using U = std::decay_t<T>;
 
-            const SignalHandler newHandler = [&](const Message& msg)
+            const std::string ifaceName = _iface.ToString();
+            const std::string propertyName = std::move(property);
+
+            const SignalHandler newHandler = [ifaceName, propertyName, handler = std::move(handler)](const Message& msg)
             {
                 const auto args = msg.GetArgs<
                     std::string,
                     std::map<std::string, DBusVariant>,
                     std::vector<std::string>>();
 
-                if (std::get<0>(args) != _iface.ToString())
+                if (std::get<0>(args) != ifaceName)
                     return;
 
                 const auto& map = std::get<1>(args);
-                const auto it = map.find(property);
+                const auto it = map.find(propertyName);
                 if (it == map.end())
                     return;
 
