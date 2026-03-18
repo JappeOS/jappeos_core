@@ -39,6 +39,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         int                controlFd;
         std::string        seat;
         std::vector<pid_t> privilegedClientProcesses;
+        std::string        activeState;
+        std::string        result;
     };
 
     // TODO: Track session main process for crashes
@@ -67,10 +69,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     private:
         Object _object;
         Interface& _iface;
-        std::unique_ptr<SignalSubscription> _subJobRemoved;
+        std::unique_ptr<SignalSubscription> _subUnitNew;
+        std::unique_ptr<SignalSubscription> _subMainPIDChanged;
+        std::unique_ptr<SignalSubscription> _subActiveStateChanged;
+        std::unique_ptr<SignalSubscription> _subSubstateChanged;
+        std::unique_ptr<SignalSubscription> _subResultChanged;
 
         std::map<std::string, pam_handle_t*> _activePAMHandles;
         std::map<std::string, SessionInfo>   _sessions;
+        std::map<std::string, std::vector<std::unique_ptr<SignalSubscription>>> _sessionSubscriptions;
         std::vector<std::string>             _pendingUnits;
         std::string _greeterSessionID;
         bool        _isGreeterActive = false;
@@ -94,13 +101,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                            uid_t& outUid,
                            std::string& outSeat,
                            bool isLoginSession = false);
-        void StopSession(const std::string& sessionId, bool isLoginSession = false);
+        void StopSession(const std::string& sessionId);
 
         void AuthenticateAndOpenPAMSession(const std::string& service,
                                            const std::string& username,
                                            const std::string& password,
                                            int& outControlFd,
                                            pid_t& outChildPid);
+        void SubscribeToSessionSignals(const std::string& sessionId, const std::string& unitName);
         void SpawnUserSessionProcesses(bool isLoginSession,
                                        const std::string& username,
                                        const std::string& sessionId,
@@ -111,7 +119,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         void TerminatePAMForSession(SessionInfo& session) const;
 
         //void HandleSessionStop();
-        void HandleJobRemoved(const Message& msg);
+        void HandleUnitNew(const Message& msg); // <-- TODO: Replase with UnitStarted
+        void HandleSessionMainPIDChanged(const std::string& sessionId, pid_t newPID);
+        void HandleSessionActiveStateChanged(const std::string& sessionId, const std::string& activeState);
+        void HandleSessionResultChanged(const std::string& sessionId, const std::string& result);
+        void EvaluateSessionState(const SessionInfo& session);
 
         [[nodiscard]] bool IsGreeter(uid_t callerUid) const;
         [[nodiscard]] std::string QueryLogindSessionForUid(uid_t uid, ObjectPath& outObjectPath) const noexcept;
