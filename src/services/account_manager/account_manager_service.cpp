@@ -132,8 +132,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
     }
 
     ObjectPath AccountManagerService::AddUser(const std::string& username,
-                                                 const std::string& realName,
-                                                 const bool cache) const
+                                              const std::string& realName,
+                                              const bool cache) const
     {
         if (username.empty() || realName.empty())
         {
@@ -206,8 +206,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
     }
 
     void AccountManagerService::SetUserPassword(const ObjectPath& userObject,
-                                                   const std::string& cryptedPassword,
-                                                   const std::string& hint) const
+                                                const std::string& cryptedPassword,
+                                                const std::string& hint) const
     {
         auto fwdMsg = Message::CreateMethodCall(
             "org.freedesktop.Accounts",
