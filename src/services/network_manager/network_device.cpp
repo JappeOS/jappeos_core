@@ -30,6 +30,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
     NetworkDevice::NetworkDevice(NetworkManagerService& source,
                                  Connection& connection,
                                  ObjectPath objectPath) :
+                                 _source(source),
                                  _conn(connection),
                                  _path(std::move(objectPath)),
                                  _object(_conn, _path),
@@ -41,7 +42,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                                  _hwAddress       (_conn, _iface, "HwAddress", ""),
                                  _managed         (_conn, _iface, "Managed", false),
                                  _activeConnection(_conn, _iface, "ActiveConnection", ObjectPath())
-    {}
+    {
+        _iface.RegisterMethod("SetEnabled", [&](const auto &m) { OnSetEnabled(m); });
+    }
 
     void NetworkDevice::SetState(const std::string& state)
     {
@@ -68,6 +71,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         _activeConnection = path;
     }
 
+    void NetworkDevice::OnSetEnabled(const Message& message)
+    {
+        const auto [enabled] = message.GetArgs<bool>();
+        _source.EthernetSetEnabled(*this, enabled, message);
+    }
+
     // NetworkWifiDevice
 
     NetworkWifiDevice::NetworkWifiDevice(NetworkManagerService& source,
@@ -82,7 +91,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         _iface.RegisterMethod("Disconnect", [&](const auto &m) { OnDisconnect(m); });
         _iface.RegisterProperty<std::vector<ObjectPath>>(
             "AccessPoints",
-            [this]
+            [&]
             {
                 auto ks = std::views::keys(_accessPoints);
                 std::vector<ObjectPath> keys{ks.begin(), ks.end()};
@@ -93,17 +102,25 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     void NetworkWifiDevice::OnScan(const Message& message)
     {
-
+        _source.WifiScan(*this, message);
     }
 
     void NetworkWifiDevice::OnConnect(const Message& message)
     {
-
+        const auto [ssid, security, secret]
+                = message.GetArgs<std::string, std::string, std::string>();
+        _source.WifiConnect(*this, ssid, security, secret, message);
     }
 
     void NetworkWifiDevice::OnDisconnect(const Message& message)
     {
+        _source.WifiDisconnect(*this, message);
+    }
 
+    void NetworkWifiDevice::OnSetEnabled(const Message& message)
+    {
+        const auto [enabled] = message.GetArgs<bool>();
+        _source.WifiSetEnabled(*this, enabled, message);
     }
 
     void NetworkWifiDevice::EmitAccessPointAdded(const ObjectPath& path) const

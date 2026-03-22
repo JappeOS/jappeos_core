@@ -31,6 +31,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                       Connection& connection,
                       ObjectPath objectPath);
 
+        virtual ~NetworkDevice() = default;
+
         [[nodiscard]] std::string GetId() const              { return _id.Get(); }
         [[nodiscard]] std::string GetType() const            { return _type.Get(); }
         [[nodiscard]] std::string GetState() const           { return _state.Get(); }
@@ -43,9 +45,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void SetActiveConnection(const ObjectPath& path);
 
     protected:
+        NetworkManagerService& _source;
         Connection&   _conn;
         ObjectPath    _path;
         Object        _object;
+
+        virtual void OnSetEnabled(const Message& message);
 
     private:
         InterfaceName     _interfaceName;
@@ -60,6 +65,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     class NetworkWifiDevice : public NetworkDevice
     {
+        friend class NetworkManagerService;
+
     public:
         NetworkWifiDevice(NetworkManagerService& source,
                           Connection& connection,
@@ -73,6 +80,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void OnScan(const Message& message);
         void OnConnect(const Message& message);
         void OnDisconnect(const Message& message);
+        void OnSetEnabled(const Message& message) override;
 
         void EmitAccessPointAdded(const ObjectPath& path) const;
         void EmitAccessPointRemoved(const ObjectPath& path) const;

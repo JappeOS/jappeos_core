@@ -18,6 +18,12 @@
 
 #include "network_manager_service.h"
 
+#include <NetworkManager.h>
+
+#include <cctype>
+#include <cstring>
+#include <unordered_set>
+
 #include "network_device.h"
 #include "network_connection.h"
 #include "../../utils/dbus_utils.h"
@@ -26,6 +32,148 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 {
+    namespace
+    {
+        std::string SsidToString(GBytes* ssid)
+        {
+            if (!ssid)
+                return "";
+
+            gsize len = 0;
+            const auto* bytes =
+                static_cast<const guint8*>(g_bytes_get_data(ssid, &len));
+
+            if (!bytes || len == 0)
+                return "";
+
+            char* utf8 = nm_utils_ssid_to_utf8(bytes, len);
+            if (!utf8)
+                return "";
+
+            std::string out = utf8;
+            g_free(utf8);
+            return out;
+        }
+
+        std::string AccessPointSecurityToString(NMAccessPoint* ap)
+        {
+            const auto flags = nm_access_point_get_flags(ap);
+            const auto wpa = nm_access_point_get_wpa_flags(ap);
+            const auto rsn = nm_access_point_get_rsn_flags(ap);
+
+            if (!(flags & NM_802_11_AP_FLAGS_PRIVACY))
+                return "open";
+
+            if (rsn & (NM_802_11_AP_SEC_KEY_MGMT_SAE | NM_802_11_AP_SEC_KEY_MGMT_EAP_SUITE_B_192))
+                return "wpa3";
+
+            if (rsn & (NM_802_11_AP_SEC_KEY_MGMT_OWE | NM_802_11_AP_SEC_KEY_MGMT_OWE_TM))
+                return "owe";
+
+            if (rsn & (NM_802_11_AP_SEC_KEY_MGMT_PSK | NM_802_11_AP_SEC_KEY_MGMT_802_1X))
+                return "wpa2";
+
+            if (wpa & (NM_802_11_AP_SEC_KEY_MGMT_PSK | NM_802_11_AP_SEC_KEY_MGMT_802_1X))
+                return "wpa1";
+
+            return "wep";
+        }
+
+        std::string NormalizeSecurity(std::string security)
+        {
+            for (auto& c : security)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+            return security;
+        }
+
+        bool ConfigureWifiSecurity(NMConnection* connection,
+                                   const std::string& security,
+                                   const std::string& secret,
+                                   std::string& errorMessage)
+        {
+            if (security.empty() || security == "open")
+                return true;
+
+            auto* settingWirelessSecurity = NM_SETTING_WIRELESS_SECURITY(nm_setting_wireless_security_new());
+
+            if (security == "wpa1" || security == "wpa2")
+            {
+                if (secret.empty())
+                {
+                    errorMessage = "Secret is required for WPA/WPA2 networks";
+                    g_object_unref(settingWirelessSecurity);
+                    return false;
+                }
+
+                g_object_set(
+                    settingWirelessSecurity,
+                    NM_SETTING_WIRELESS_SECURITY_KEY_MGMT,
+                    "wpa-psk",
+                    NM_SETTING_WIRELESS_SECURITY_PSK,
+                    secret.c_str(),
+                    nullptr
+                );
+            }
+            else if (security == "wpa3")
+            {
+                if (secret.empty())
+                {
+                    errorMessage = "Secret is required for WPA3 networks";
+                    g_object_unref(settingWirelessSecurity);
+                    return false;
+                }
+
+                g_object_set(
+                    settingWirelessSecurity,
+                    NM_SETTING_WIRELESS_SECURITY_KEY_MGMT,
+                    "sae",
+                    NM_SETTING_WIRELESS_SECURITY_PSK,
+                    secret.c_str(),
+                    nullptr
+                );
+            }
+            else if (security == "wep")
+            {
+                if (secret.empty())
+                {
+                    errorMessage = "Secret is required for WEP networks";
+                    g_object_unref(settingWirelessSecurity);
+                    return false;
+                }
+
+                g_object_set(
+                    settingWirelessSecurity,
+                    NM_SETTING_WIRELESS_SECURITY_KEY_MGMT,
+                    "none",
+                    NM_SETTING_WIRELESS_SECURITY_WEP_KEY0,
+                    secret.c_str(),
+                    nullptr
+                );
+            }
+            else if (security == "owe")
+            {
+                g_object_set(
+                    settingWirelessSecurity,
+                    NM_SETTING_WIRELESS_SECURITY_KEY_MGMT,
+                    "owe",
+                    nullptr
+                );
+            }
+            else
+            {
+                errorMessage = "Unsupported Wi-Fi security type: " + security;
+                g_object_unref(settingWirelessSecurity);
+                return false;
+            }
+
+            nm_connection_add_setting(
+                connection,
+                NM_SETTING(settingWirelessSecurity)
+            );
+            return true;
+        }
+    }
 
     NetworkManagerService::NetworkManagerService(ServiceManager* serviceManager,
                                                  Connection* conn) :
@@ -59,6 +207,369 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         auto ks = std::views::keys(_devices);
         std::vector<ObjectPath> keys{ks.begin(), ks.end()};
         return keys;
+    }
+
+    void NetworkManagerService::WifiScan(NetworkWifiDevice& dev, const Message& message)
+    {
+        SharedPolicy(message);
+
+        if (!_nmClient)
+            throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
+
+        auto* nmDev = nm_client_get_device_by_iface(_nmClient, dev.GetId().c_str());
+        if (!nmDev)
+            throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unknown device");
+
+        if (!NM_IS_DEVICE_WIFI(nmDev))
+            throw DBusException(DBUS_ERROR_FAILED, "Device is not a Wi-Fi device");
+
+        auto* wifi = NM_DEVICE_WIFI(nmDev);
+
+        GError* error = nullptr;
+        if (!nm_device_wifi_request_scan(wifi, nullptr, &error))
+        {
+            const std::string msg =
+                error && error->message
+                    ? error->message
+                    : "Wi-Fi scan failed";
+
+            if (error)
+                g_error_free(error);
+
+            throw DBusException(DBUS_ERROR_FAILED, msg);
+        }
+
+        if (error)
+            g_error_free(error);
+
+        SyncWifiAccessPoints(wifi, dev);
+
+        auto reply = Message::CreateMethodReturn(message);
+        reply.Send(*_conn);
+    }
+
+    void NetworkManagerService::WifiConnect(NetworkWifiDevice& dev,
+                                            const std::string& ssid,
+                                            const std::string& security,
+                                            const std::string& secret,
+                                            const Message& message)
+    {
+        SharedPolicy(message);
+
+        if (!_nmClient)
+            throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
+
+        if (ssid.empty())
+            throw DBusException(DBUS_ERROR_INVALID_ARGS, "SSID cannot be empty");
+
+        auto* nmDev = nm_client_get_device_by_iface(_nmClient, dev.GetId().c_str());
+        if (!nmDev)
+            throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unknown device");
+
+        if (!NM_IS_DEVICE_WIFI(nmDev))
+            throw DBusException(DBUS_ERROR_FAILED, "Device is not a Wi-Fi device");
+
+        auto* wifi = NM_DEVICE_WIFI(nmDev);
+
+        const std::string requestedSecurity = NormalizeSecurity(security);
+        NMAccessPoint* selectedAp = nullptr;
+
+        if (const GPtrArray* aps = nm_device_wifi_get_access_points(wifi))
+        {
+            for (guint i = 0; i < aps->len; ++i)
+            {
+                auto* ap = NM_ACCESS_POINT(aps->pdata[i]);
+                if (!ap)
+                    continue;
+
+                if (SsidToString(nm_access_point_get_ssid(ap)) != ssid)
+                    continue;
+
+                if (requestedSecurity.empty())
+                {
+                    selectedAp = ap;
+                    break;
+                }
+
+                const auto apSecurity =
+                    NormalizeSecurity(AccessPointSecurityToString(ap));
+                if (apSecurity == requestedSecurity)
+                {
+                    selectedAp = ap;
+                    break;
+                }
+            }
+        }
+
+        if (!selectedAp)
+        {
+            const std::string details = requestedSecurity.empty()
+                ? ""
+                : " with security `" + requestedSecurity + "`";
+            throw DBusException(
+                DBUS_ERROR_INVALID_ARGS,
+                "No visible access point found for SSID `" + ssid + "`" + details
+            );
+        }
+
+        const char* apPathRaw = nm_object_get_path(NM_OBJECT(selectedAp));
+        if (!apPathRaw)
+            throw DBusException(DBUS_ERROR_FAILED, "Selected access point has no valid object path");
+        const std::string apPath = apPathRaw;
+
+        if (const auto* available = nm_device_get_available_connections(nmDev))
+        {
+            for (guint i = 0; i < available->len; ++i)
+            {
+                auto* candidate = static_cast<NMConnection*>(
+                    g_ptr_array_index(const_cast<GPtrArray*>(available), i)
+                );
+                if (!candidate)
+                    continue;
+
+                auto* wireless = nm_connection_get_setting_wireless(candidate);
+                if (!wireless)
+                    continue;
+
+                if (SsidToString(nm_setting_wireless_get_ssid(wireless)) != ssid)
+                    continue;
+
+                nm_client_activate_connection_async(
+                    _nmClient,
+                    candidate,
+                    nmDev,
+                    apPath.c_str(),
+                    nullptr,
+                    nullptr,
+                    nullptr
+                );
+
+                auto reply = Message::CreateMethodReturn(message);
+                reply.Send(*_conn);
+                return;
+            }
+        }
+
+        const std::string effectiveSecurity = requestedSecurity.empty()
+            ? NormalizeSecurity(AccessPointSecurityToString(selectedAp))
+            : requestedSecurity;
+
+        auto* connection = NM_CONNECTION(nm_simple_connection_new());
+
+        auto* settingConnection = NM_SETTING_CONNECTION(nm_setting_connection_new());
+        const std::string connectionId = "Wi-Fi " + ssid;
+        g_object_set(
+            settingConnection,
+            NM_SETTING_CONNECTION_ID,
+            connectionId.c_str(),
+            NM_SETTING_CONNECTION_TYPE,
+            NM_SETTING_WIRELESS_SETTING_NAME,
+            NM_SETTING_CONNECTION_AUTOCONNECT,
+            TRUE,
+            nullptr
+        );
+        nm_connection_add_setting(connection, NM_SETTING(settingConnection));
+
+        auto* settingWireless = NM_SETTING_WIRELESS(nm_setting_wireless_new());
+        GBytes* ssidBytes = g_bytes_new(ssid.data(), ssid.size());
+        g_object_set(
+            settingWireless,
+            NM_SETTING_WIRELESS_SSID,
+            ssidBytes,
+            NM_SETTING_WIRELESS_MODE,
+            "infrastructure",
+            nullptr
+        );
+        g_bytes_unref(ssidBytes);
+
+        std::string securityError;
+        if (!ConfigureWifiSecurity(
+            connection,
+            effectiveSecurity,
+            secret,
+            securityError
+        ))
+        {
+            g_object_unref(settingWireless);
+            g_object_unref(connection);
+            throw DBusException(DBUS_ERROR_INVALID_ARGS, securityError);
+        }
+        nm_connection_add_setting(connection, NM_SETTING(settingWireless));
+
+        nm_client_add_and_activate_connection_async(
+            _nmClient,
+            connection,
+            nmDev,
+            apPath.c_str(),
+            nullptr,
+            nullptr,
+            nullptr
+        );
+
+        g_object_unref(connection);
+
+        auto reply = Message::CreateMethodReturn(message);
+        reply.Send(*_conn);
+    }
+
+    void NetworkManagerService::WifiDisconnect(NetworkWifiDevice& dev, const Message& message)
+    {
+        SharedPolicy(message);
+
+        if (!_nmClient)
+            throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
+
+        auto* nmDev = nm_client_get_device_by_iface(_nmClient, dev.GetId().c_str());
+        if (!nmDev)
+            throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unknown device");
+
+        if (!NM_IS_DEVICE_WIFI(nmDev))
+            throw DBusException(DBUS_ERROR_FAILED, "Device is not a Wi-Fi device");
+
+        if (!nm_device_get_active_connection(nmDev))
+        {
+            auto reply = Message::CreateMethodReturn(message);
+            reply.Send(*_conn);
+            return;
+        }
+
+        GError* error = nullptr;
+        if (!nm_device_disconnect(nmDev, nullptr, &error))
+        {
+            const std::string msg =
+                error && error->message
+                    ? error->message
+                    : "Failed to disconnect Wi-Fi device";
+
+            if (error)
+                g_error_free(error);
+
+            throw DBusException(DBUS_ERROR_FAILED, msg);
+        }
+
+        if (error)
+            g_error_free(error);
+
+        auto reply = Message::CreateMethodReturn(message);
+        reply.Send(*_conn);
+    }
+
+    void NetworkManagerService::EthernetSetEnabled(NetworkDevice& dev, const bool enabled, const Message& message)
+    {
+        SharedPolicy(message);
+
+        if (!_nmClient)
+            throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
+
+        _serviceManager->Get<Logger::LoggerService>()->Debug(
+            "EthernetSetEnabled called: id=" + dev.GetId() +
+            " enabled=" + std::string(enabled ? "true" : "false")
+        );
+
+        auto* nmDev = nm_client_get_device_by_iface(_nmClient, dev.GetId().c_str());
+        if (!nmDev)
+            throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unknown device");
+
+        if (!NM_IS_DEVICE_ETHERNET(nmDev))
+            throw DBusException(DBUS_ERROR_FAILED, "Device is not an Ethernet device");
+
+        if (enabled)
+        {
+            if (nm_device_get_active_connection(nmDev))
+            {
+                auto reply = Message::CreateMethodReturn(message);
+                reply.Send(*_conn);
+                return;
+            }
+
+            const auto* avail = nm_device_get_available_connections(nmDev);
+            NMConnection* best = nullptr;
+            NMConnection* bestAuto = nullptr;
+            NMConnection* bestIface = nullptr;
+
+            const char* iface = nm_device_get_iface(nmDev);
+
+            if (avail)
+            {
+                for (guint i = 0; i < avail->len; ++i)
+                {
+                    auto* c = static_cast<NMConnection*>(g_ptr_array_index(const_cast<GPtrArray*>(avail), i));
+                    if (!c)
+                        continue;
+
+                    if (!best)
+                        best = c;
+
+                    auto* s = nm_connection_get_setting_connection(c);
+                    const char* cIface = s ? nm_setting_connection_get_interface_name(s) : nullptr;
+                    const bool ifaceMatches = iface && cIface && std::strcmp(iface, cIface) == 0;
+                    const bool ifaceOk = ifaceMatches || !cIface || cIface[0] == '\0';
+                    const bool autoconnect = s && nm_setting_connection_get_autoconnect(s);
+
+                    if (ifaceMatches && autoconnect)
+                        bestAuto = c;
+                    else if (!bestAuto && ifaceOk && autoconnect)
+                        bestAuto = c;
+
+                    if (!bestIface && ifaceMatches)
+                        bestIface = c;
+                }
+            }
+
+            const auto* conn = bestAuto ? bestAuto : (bestIface ? bestIface : best);
+            if (!conn)
+                throw DBusException(DBUS_ERROR_FAILED, "No available connection for Ethernet device");
+
+            nm_client_activate_connection_async(
+                _nmClient,
+                const_cast<NMConnection*>(conn),
+                nmDev,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr
+            );
+        }
+        else
+        {
+            GError* error = nullptr;
+            if (!nm_device_disconnect(nmDev, nullptr, &error))
+            {
+                const std::string msg =
+                    error && error->message
+                        ? error->message
+                        : "Failed to disconnect Ethernet device";
+
+                if (error)
+                    g_error_free(error);
+
+                throw DBusException(DBUS_ERROR_FAILED, msg);
+            }
+
+            if (error)
+                g_error_free(error);
+        }
+
+        auto reply = Message::CreateMethodReturn(message);
+        reply.Send(*_conn);
+    }
+
+    void NetworkManagerService::WifiSetEnabled(NetworkWifiDevice& dev, const bool enabled, const Message& message)
+    {
+        SharedPolicy(message);
+
+        if (!_nmClient)
+            throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
+
+        _serviceManager->Get<Logger::LoggerService>()->Debug(
+            "WifiSetEnabled called: id=" + dev.GetId() +
+            " enabled=" + std::string(enabled ? "true" : "false")
+        );
+
+        nm_client_wireless_set_enabled(_nmClient, enabled);
+
+        auto reply = Message::CreateMethodReturn(message);
+        reply.Send(*_conn);
     }
 
     // TODO: Polkit
@@ -191,77 +702,143 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
     void NetworkManagerService::DiscoverDevices()
     {
         const GPtrArray* nmDevices = nm_client_get_devices(_nmClient);
+        if (!nmDevices)
+            return;
 
         for (guint i = 0; i < nmDevices->len; ++i)
         {
+            if (!nmDevices->pdata[i])
+            {
+                _serviceManager->Get<Logger::LoggerService>()->Debug(
+                    "DiscoverDevices: null device entry at index " + std::to_string(i)
+                );
+                continue;
+            }
+
             const auto nmDev = NM_DEVICE(nmDevices->pdata[i]);
+            if (!G_IS_OBJECT(nmDev))
+            {
+                _serviceManager->Get<Logger::LoggerService>()->Debug(
+                    "DiscoverDevices: non-GObject device entry at index " + std::to_string(i)
+                );
+                continue;
+            }
+
             AddDevice(nmDev);
         }
     }
 
     void NetworkManagerService::SubscribeToNmSignals()
     {
-        g_signal_connect_object(
+        if (!G_IS_OBJECT(_nmClient))
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Debug(
+                "SubscribeToNmSignals: _nmClient is not a GObject"
+            );
+            return;
+        }
+
+        g_signal_connect(
             _nmClient,
             "device-added",
             G_CALLBACK(+[] (NMClient* client, NMDevice* device, NetworkManagerService* self)
             {
                 self->AddDevice(device);
             }),
-            this,
-            G_CONNECT_DEFAULT
+            this
         );
 
-        g_signal_connect_object(
+        g_signal_connect(
             _nmClient,
             "device-removed",
             G_CALLBACK(+[] (NMClient* client, NMDevice* device, NetworkManagerService* self)
             {
                 self->RemoveDevice(device);
             }),
-            this,
-            G_CONNECT_DEFAULT
+            this
         );
     }
 
     void NetworkManagerService::SubscribeToDeviceSignals(NMDevice* nmDev)
     {
-        g_signal_connect_object(
+        if (!G_IS_OBJECT(nmDev))
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Debug(
+                "SubscribeToDeviceSignals: nmDev is not a GObject"
+            );
+            return;
+        }
+
+        g_signal_connect(
             nmDev,
             "notify::state",
             G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
             {
                 self->OnDeviceStateChanged(NM_DEVICE(obj));
             }),
-            this,
-            G_CONNECT_DEFAULT
+            this
         );
 
-        g_signal_connect_object(
+        g_signal_connect(
             nmDev,
             "notify::active-connection",
             G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
             {
                 self->OnDeviceActiveConnectionChanged(NM_DEVICE(obj));
             }),
-            this,
-            G_CONNECT_DEFAULT
+            this
         );
 
-        g_signal_connect_object(
+        g_signal_connect(
             nmDev,
             "notify::managed",
             G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
             {
                 self->OnDeviceManagedChanged(NM_DEVICE(obj));
             }),
-            this,
-            G_CONNECT_DEFAULT
+            this
         );
+
+        if (NM_IS_DEVICE_WIFI(nmDev))
+        {
+            auto* wifi = NM_DEVICE_WIFI(nmDev);
+
+            g_signal_connect(
+                wifi,
+                "notify::access-points",
+                G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
+                {
+                    self->OnWifiDeviceAccessPointsChanged(
+                        NM_DEVICE_WIFI(obj)
+                    );
+                }),
+                this
+            );
+
+            g_signal_connect(
+                wifi,
+                "notify::active-access-point",
+                G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
+                {
+                    self->OnWifiDeviceActiveAccessPointChanged(
+                        NM_DEVICE_WIFI(obj)
+                    );
+                }),
+                this
+            );
+        }
     }
 
     void NetworkManagerService::AddDevice(NMDevice* nmDev)
     {
+        if (!G_IS_OBJECT(nmDev))
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Debug(
+                "AddDevice: nmDev is not a GObject"
+            );
+            return;
+        }
+
         const char* iface = nm_device_get_iface(nmDev);
         const NMDeviceType nmType = nm_device_get_device_type(nmDev);
 
@@ -302,8 +879,23 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         device->_type = DeviceTypeToString(nmType);
         device->_state = DeviceStateToString(nm_device_get_state(nmDev));
 
+        _serviceManager->Get<Logger::LoggerService>()->Debug(
+            "AddDevice init: id=" + device->_id.Get() +
+            " type=" + device->_type.Get() +
+            " state=" + device->_state.Get()
+        );
+
         _devices.emplace(path, std::move(device));
         EmitDeviceAdded(path);
+
+        if (nmType == NM_DEVICE_TYPE_WIFI)
+        {
+            auto* dev = static_cast<NetworkWifiDevice*>(_devices.at(path).get());
+            SyncWifiAccessPoints(
+                NM_DEVICE_WIFI(nmDev),
+                *dev
+            );
+        }
     }
 
     void NetworkManagerService::RemoveDevice(NMDevice* nmDev)
@@ -365,6 +957,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             }
 
             dev->SetActiveConnection(ObjectPath{});
+
             return;
         }
 
@@ -450,7 +1043,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     void NetworkManagerService::SubscribeToActiveConnectionSignals(NMActiveConnection* ac)
     {
-        g_signal_connect_object(
+        if (!G_IS_OBJECT(ac))
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Debug(
+                "SubscribeToActiveConnectionSignals: ac is not a GObject"
+            );
+            return;
+        }
+
+        g_signal_connect(
             ac,
             "notify::state",
             G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
@@ -459,11 +1060,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                     NM_ACTIVE_CONNECTION(obj)
                 );
             }),
-            this,
-            G_CONNECT_DEFAULT
+            this
         );
 
-        g_signal_connect_object(
+        g_signal_connect(
             ac,
             "notify::ip4-config",
             G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
@@ -472,11 +1072,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                     NM_ACTIVE_CONNECTION(obj)
                 );
             }),
-            this,
-            G_CONNECT_DEFAULT
+            this
         );
 
-        g_signal_connect_object(
+        g_signal_connect(
             ac,
             "notify::ip6-config",
             G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
@@ -485,8 +1084,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                     NM_ACTIVE_CONNECTION(obj)
                 );
             }),
-            this,
-            G_CONNECT_DEFAULT
+            this
         );
     }
 
@@ -495,6 +1093,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         auto* ap = nm_device_wifi_get_active_access_point(nmDev);
         if (!ap)
         {
+            conn._nmActiveApPath = ObjectPath{};
+            conn._signalStrength.Set(0);
+            return;
+        }
+
+        if (!G_IS_OBJECT(ap))
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Debug(
+                "SubscribeToWifiSignalStrength: ap is not a GObject"
+            );
             conn._nmActiveApPath = ObjectPath{};
             conn._signalStrength.Set(0);
             return;
@@ -509,7 +1117,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
         conn._nmActiveApPath = apPath;
 
-        g_signal_connect_object(
+        g_signal_connect(
             ap,
             "notify::strength",
             G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
@@ -518,8 +1126,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                     NM_ACCESS_POINT(obj)
                 );
             }),
-            this,
-            G_CONNECT_DEFAULT
+            this
         );
     }
 
@@ -665,6 +1272,135 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         }
 
         return nullptr;
+    }
+
+    void NetworkManagerService::SyncWifiAccessPoints(NMDeviceWifi* nmDev, NetworkWifiDevice& dev)
+    {
+        const GPtrArray* aps = nm_device_wifi_get_access_points(nmDev);
+
+        NMAccessPoint* activeAp = nm_device_wifi_get_active_access_point(nmDev);
+        const char* activeApPath =
+            activeAp ? nm_object_get_path(NM_OBJECT(activeAp)) : nullptr;
+
+        std::unordered_set<ObjectPath, ObjectPathHash> newPaths;
+        if (aps)
+            newPaths.reserve(aps->len);
+
+        if (aps)
+        {
+            for (guint i = 0; i < aps->len; ++i)
+            {
+                auto* ap = NM_ACCESS_POINT(aps->pdata[i]);
+                const char* nmApPath = nm_object_get_path(NM_OBJECT(ap));
+
+                if (!nmApPath)
+                    continue;
+
+                const ObjectPath apPath = dev._path
+                    .Child("AccessPoints")
+                    .Child(EncodeForObjectPath(nmApPath));
+
+                newPaths.insert(apPath);
+
+                const bool existed = dev._accessPoints.contains(apPath);
+                if (!existed)
+                {
+                    dev._accessPoints.emplace(
+                        apPath,
+                        std::make_unique<NetworkAccessPoint>(*this, *_conn, apPath)
+                    );
+                }
+
+                auto& apObj = *dev._accessPoints.at(apPath);
+
+                apObj._ssid.Set(
+                    SsidToString(nm_access_point_get_ssid(ap))
+                );
+                apObj._strength.Set(
+                    static_cast<int>(nm_access_point_get_strength(ap))
+                );
+                apObj._security.Set(
+                    AccessPointSecurityToString(ap)
+                );
+                apObj._frequency.Set(
+                    static_cast<int>(nm_access_point_get_frequency(ap))
+                );
+                apObj._connected.Set(
+                    activeApPath && strcmp(activeApPath, nmApPath) == 0
+                );
+
+                if (!existed)
+                    dev.EmitAccessPointAdded(apPath);
+            }
+        }
+
+        for (auto it = dev._accessPoints.begin(); it != dev._accessPoints.end();)
+        {
+            if (newPaths.contains(it->first))
+            {
+                ++it;
+                continue;
+            }
+
+            const auto removedPath = it->first;
+            it = dev._accessPoints.erase(it);
+            dev.EmitAccessPointRemoved(removedPath);
+        }
+    }
+
+    void NetworkManagerService::OnWifiDeviceAccessPointsChanged(NMDeviceWifi* nmDev)
+    {
+        auto* dev = FindDevice(NM_DEVICE(nmDev));
+        if (!dev)
+            return;
+
+        auto* wifiDev = static_cast<NetworkWifiDevice*>(dev);
+        SyncWifiAccessPoints(nmDev, *wifiDev);
+    }
+
+    void NetworkManagerService::OnWifiDeviceActiveAccessPointChanged(NMDeviceWifi* nmDev)
+    {
+        auto* dev = FindDevice(NM_DEVICE(nmDev));
+        if (!dev)
+            return;
+
+        auto* wifiDev = static_cast<NetworkWifiDevice*>(dev);
+        SyncWifiAccessPoints(nmDev, *wifiDev);
+    }
+
+    std::string NetworkManagerService::DeviceTypeToString(const unsigned int t)
+    {
+        switch (t)
+        {
+            case NM_DEVICE_TYPE_WIFI:     return NETWORK_DEVICE_TYPE_WIFI;
+            case NM_DEVICE_TYPE_ETHERNET: return NETWORK_DEVICE_TYPE_ETHERNET;
+            default:                      return NETWORK_DEVICE_TYPE_UNKNOWN;
+        }
+    }
+
+    std::string NetworkManagerService::DeviceStateToString(const unsigned int s)
+    {
+        switch (s)
+        {
+            case NM_DEVICE_STATE_ACTIVATED:    return NETWORK_DEVICE_STATE_CONNECTED;
+            case NM_DEVICE_STATE_PREPARE:
+            case NM_DEVICE_STATE_CONFIG:
+            case NM_DEVICE_STATE_NEED_AUTH:    return NETWORK_DEVICE_STATE_CONNECTING;
+            case NM_DEVICE_STATE_DISCONNECTED: return NETWORK_DEVICE_STATE_DISCONNECTED;
+            case NM_DEVICE_STATE_UNAVAILABLE:
+            default:                           return NETWORK_DEVICE_STATE_UNAVAILABLE;
+        }
+    }
+
+    std::string NetworkManagerService::ActiveConnectionStateToString(const unsigned int s)
+    {
+        switch (s)
+        {
+            case NM_ACTIVE_CONNECTION_STATE_ACTIVATED:    return NETWORK_CONNECTION_STATE_ACTIVATED;
+            case NM_ACTIVE_CONNECTION_STATE_ACTIVATING:   return NETWORK_CONNECTION_STATE_ACTIVATING;
+            case NM_ACTIVE_CONNECTION_STATE_DEACTIVATING: return NETWORK_CONNECTION_STATE_DEACTIVATING;
+            default:                                      return NETWORK_CONNECTION_STATE_UNKNOWN;
+        }
     }
 
 }

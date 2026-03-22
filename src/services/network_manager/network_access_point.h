@@ -24,6 +24,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 {
     class NetworkAccessPoint
     {
+        friend class NetworkManagerService;
+
     public:
         NetworkAccessPoint(NetworkManagerService& source,
                            Connection& connection,

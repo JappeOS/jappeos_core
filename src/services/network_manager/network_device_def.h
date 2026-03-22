@@ -22,6 +22,7 @@
 #define NETWORK_DEVICE_TYPE_ETHERNET      "ethernet"
 #define NETWORK_DEVICE_TYPE_UNKNOWN       "unknown"
 
+#define NETWORK_DEVICE_STATE_UNAVAILABLE  "unavailable"
 #define NETWORK_DEVICE_STATE_CONNECTED    "connected"
 #define NETWORK_DEVICE_STATE_CONNECTING   "connecting"
 #define NETWORK_DEVICE_STATE_DISCONNECTED "disconnected"

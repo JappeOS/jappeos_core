@@ -224,7 +224,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             {
                 throw DBusException(
                     DBUS_ERROR_INVALID_ARGS,
-                    "No such session"
+                    "Invalid session"
                 );
             }
         }
@@ -333,11 +333,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     }
 
     void SessionManagerService::CreateSession(const std::string& username,
-                                                 const std::string& password,
-                                                 std::string& outSessionId,
-                                                 uid_t& outUid,
-                                                 std::string& outSeat,
-                                                 const bool isLoginSession)
+                                              const std::string& password,
+                                              std::string& outSessionId,
+                                              uid_t& outUid,
+                                              std::string& outSeat,
+                                              const bool isLoginSession)
     {
         // --- 1) Lookup UID ---
         const passwd* pwd = getpwnam(username.c_str());

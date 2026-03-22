@@ -17,15 +17,20 @@
  */
 
 #pragma once
-#include <NetworkManager.h>
-
 #include "network_connection_def.h"
 #include "network_device_def.h"
 #include "../service.h"
 
+typedef struct _NMClient NMClient;
+typedef struct _NMDevice NMDevice;
+typedef struct _NMDeviceWifi NMDeviceWifi;
+typedef struct _NMActiveConnection NMActiveConnection;
+typedef struct _NMAccessPoint NMAccessPoint;
+
 namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 {
     class NetworkDevice;
+    class NetworkWifiDevice;
     class NetworkConnection;
 
     // NOTE: libnm is used only inside NetworkManagerService, never inside device classes.
@@ -37,6 +42,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         [[nodiscard]] std::string GetName() const override { return "NetworkManagerService"; }
 
         [[nodiscard]] std::vector<ObjectPath> ListDevices() const;
+        void WifiScan(NetworkWifiDevice& dev, const Message& message);
+        void WifiConnect(NetworkWifiDevice& dev,
+                         const std::string& ssid,
+                         const std::string& security,
+                         const std::string& secret,
+                         const Message& message);
+        void WifiDisconnect(NetworkWifiDevice& dev, const Message& message);
+        void EthernetSetEnabled(NetworkDevice& dev, bool enabled, const Message& message);
+        void WifiSetEnabled(NetworkWifiDevice& dev, bool enabled, const Message& message);
 
     private:
         Object     _object;
@@ -81,39 +95,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void UpdateConnectionSignalStrength(NMDeviceWifi* nmDev, NetworkConnection& conn);
         NetworkConnection* FindConnectionByAccessPoint(NMAccessPoint* ap);
 
+        void SyncWifiAccessPoints(NMDeviceWifi* nmDev, NetworkWifiDevice& dev);
+        void OnWifiDeviceAccessPointsChanged(NMDeviceWifi* nmDev);
+        void OnWifiDeviceActiveAccessPointChanged(NMDeviceWifi* nmDev);
+
     private:
-        static std::string DeviceTypeToString(const NMDeviceType t)
-        {
-            switch (t)
-            {
-                case NM_DEVICE_TYPE_WIFI:     return NETWORK_DEVICE_TYPE_WIFI;
-                case NM_DEVICE_TYPE_ETHERNET: return NETWORK_DEVICE_TYPE_ETHERNET;
-                default:                      return NETWORK_DEVICE_TYPE_UNKNOWN;
-            }
-        }
-
-        static std::string DeviceStateToString(const NMDeviceState s)
-        {
-            switch (s)
-            {
-                case NM_DEVICE_STATE_ACTIVATED: return NETWORK_DEVICE_STATE_CONNECTED;
-                case NM_DEVICE_STATE_PREPARE:
-                case NM_DEVICE_STATE_CONFIG:
-                case NM_DEVICE_STATE_NEED_AUTH: return NETWORK_DEVICE_STATE_CONNECTING;
-                default:                        return NETWORK_DEVICE_STATE_DISCONNECTED;
-            }
-        }
-
-        static std::string ActiveConnectionStateToString(const NMActiveConnectionState s)
-        {
-            switch (s)
-            {
-                case NM_ACTIVE_CONNECTION_STATE_ACTIVATED:    return NETWORK_CONNECTION_STATE_ACTIVATED;
-                case NM_ACTIVE_CONNECTION_STATE_ACTIVATING:   return NETWORK_CONNECTION_STATE_ACTIVATING;
-                case NM_ACTIVE_CONNECTION_STATE_DEACTIVATING: return NETWORK_CONNECTION_STATE_DEACTIVATING;
-                default:                                      return NETWORK_CONNECTION_STATE_UNKNOWN;
-            }
-        }
+        static std::string DeviceTypeToString(unsigned int t);
+        static std::string DeviceStateToString(unsigned int s);
+        static std::string ActiveConnectionStateToString(unsigned int s);
 
         // TODO: Maybe use something better than this method to send NM interface names (and other names) over D-Bus.
         /**
