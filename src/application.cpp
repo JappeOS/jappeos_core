@@ -19,8 +19,10 @@
 #define GENERATE_ENUM_STRINGS
 #include "application.h"
 
+#include <algorithm>
 #include <glib.h>
 #include <sstream>
+#include <vector>
 
 #include "services/watchdog/watchdog_service.h"
 #if defined(JAPPEOS_DAEMON_SESSION)
@@ -236,12 +238,87 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     void Application::Update()
     {
-        if (poll(_fds, 2, -1) < 0) return;
+        // Integrate GLib default main context fds into our poll loop so libnm
+        // and other GLib sources can wake this daemon even when there is no
+        // traffic on our own D-Bus Connection fd.
+        auto* mainContext = g_main_context_default();
+
+        std::vector<GPollFD> glibFds;
+        gint glibMaxPriority = 0;
+        gint glibTimeoutMs = -1;
+        gint glibN = 0;
+        bool glibAcquired = false;
+        bool glibReady = false;
+
+        if (mainContext)
+        {
+            glibAcquired = g_main_context_acquire(mainContext);
+            if (glibAcquired)
+            {
+                glibReady = g_main_context_prepare(mainContext, &glibMaxPriority);
+
+                glibFds.resize(16);
+                glibN = g_main_context_query(
+                    mainContext,
+                    glibMaxPriority,
+                    &glibTimeoutMs,
+                    glibFds.data(),
+                    static_cast<gint>(glibFds.size())
+                );
+
+                if (glibN > static_cast<gint>(glibFds.size()))
+                {
+                    glibFds.resize(static_cast<size_t>(glibN));
+                    glibN = g_main_context_query(
+                        mainContext,
+                        glibMaxPriority,
+                        &glibTimeoutMs,
+                        glibFds.data(),
+                        static_cast<gint>(glibFds.size())
+                    );
+                }
+
+                if (glibReady)
+                    glibTimeoutMs = 0;
+            }
+        }
+
+        std::vector<pollfd> pollFds;
+        pollFds.reserve(2 + static_cast<size_t>(std::max(0, glibN)));
+        pollFds.push_back(_fds[0]);
+        pollFds.push_back(_fds[1]);
+
+        for (gint i = 0; i < glibN; ++i)
+        {
+            pollfd pfd{};
+            pfd.fd = glibFds[i].fd;
+            pfd.events = static_cast<short>(glibFds[i].events);
+            pollFds.push_back(pfd);
+        }
+
+        if (poll(pollFds.data(), pollFds.size(), glibTimeoutMs) < 0)
+        {
+            if (glibAcquired)
+                g_main_context_release(mainContext);
+            return;
+        }
+
+        _fds[0].revents = pollFds[0].revents;
+        _fds[1].revents = pollFds[1].revents;
 
         const auto logger = NULL_SAFE_CALL_RET(_serviceManager, Get<Services::Logger::LoggerService>());
 
         // GLib support
-        while (g_main_context_iteration(nullptr, FALSE));
+        if (glibAcquired)
+        {
+            for (gint i = 0; i < glibN; ++i)
+                glibFds[i].revents = static_cast<gushort>(pollFds[2 + i].revents);
+
+            if (g_main_context_check(mainContext, glibMaxPriority, glibFds.data(), glibN))
+                g_main_context_dispatch(mainContext);
+
+            g_main_context_release(mainContext);
+        }
 
         // Signals
         if (_fds[1].revents & POLLIN)
