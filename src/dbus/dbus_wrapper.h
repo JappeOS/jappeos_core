@@ -2070,17 +2070,35 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @param iface  Interface to which this property belongs.
          * @param name   D-Bus property name.
          * @param initial Initial property value.
+         * @param settable Whether this property can be set externally via D-Bus.
+         * @param onChanged A callback that gets called when the value of this property changes.
          */
         Prop(const Connection& conn,
              Interface& iface,
              std::string name,
-             T initial) :
+             T initial,
+             const bool settable = false,
+             std::function<void(const T&)> onChanged = {}) :
              _value(std::move(initial)),
              _name(std::move(name)),
+             _onChanged(std::move(onChanged)),
              _conn(conn),
              _iface(iface)
         {
-            iface.RegisterProperty<T>(_name, [this] { return Get(); }, [this](const T& v) { Set(v); });
+            if (settable)
+            {
+                iface.RegisterProperty<T>(
+                    _name,
+                    [this] { return Get(); },
+                    [this](const T& v) { Set(v); }
+                );
+                return;
+            }
+
+            iface.RegisterProperty<T>(
+                _name,
+                [this] { return Get(); }
+            );
         }
 
         /**
@@ -2122,12 +2140,15 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
             _value = value;
             EmitPropertiesChanged();
+            if (_onChanged)
+                _onChanged(value);
             return true;
         }
 
     private:
         T _value;
         std::string _name;
+        std::function<void(const T&)> _onChanged;
         const Connection& _conn;
         Interface& _iface;
 
