@@ -61,6 +61,12 @@ set(JAPPEOS_SYSTEM_SOURCES
 set(JAPPEOS_SESSION_SOURCES
         src/services/session_host/session_host_service.cpp
         src/services/session_host/session_host_service.h
+        src/services/audio/audio_service.cpp
+        src/services/audio/audio_service.h
+        src/services/audio/audio_device.cpp
+        src/services/audio/audio_device.h
+        src/services/audio/audio_stream.cpp
+        src/services/audio/audio_stream.h
 )
 
 function(jappeos_configure_target target_name)
