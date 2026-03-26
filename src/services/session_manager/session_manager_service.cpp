@@ -920,9 +920,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             envSeat,
             envSessionClass,
         }));
-        properties.emplace_back("PartOf",      DBusVariant::make<std::string>(std::string(serviceName)));
-        properties.emplace_back("After",       DBusVariant::make<std::string>(std::string(serviceName)));
-        properties.emplace_back("Requires",    DBusVariant::make<std::string>(std::string(serviceName)));
+        properties.emplace_back("PartOf", DBusVariant::make<std::vector<std::string>>({
+            serviceName
+        }));
+        properties.emplace_back("After", DBusVariant::make<std::vector<std::string>>({
+            serviceName
+        }));
+        properties.emplace_back("Requires", DBusVariant::make<std::vector<std::string>>({
+            serviceName
+        }));
         properties.emplace_back("Restart",     DBusVariant::make<std::string>("on-failure"));
         properties.emplace_back("RestartUSec", DBusVariant::make<uint64_t>(1500000)); // 1s 500ms
 
