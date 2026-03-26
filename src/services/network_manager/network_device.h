@@ -82,6 +82,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void OnDisconnect(const Message& message);
         void OnSetEnabled(const Message& message) override;
 
+        void EmitConnectResult(uint64_t requestId,
+                               bool success,
+                               const std::string& reasonCode,
+                               const std::string& reasonMessage) const;
         void EmitAccessPointAdded(const ObjectPath& path) const;
         void EmitAccessPointRemoved(const ObjectPath& path) const;
     };

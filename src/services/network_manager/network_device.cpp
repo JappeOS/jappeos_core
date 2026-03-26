@@ -123,6 +123,21 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         _source.WifiSetEnabled(*this, enabled, message);
     }
 
+    void NetworkWifiDevice::EmitConnectResult(const uint64_t requestId,
+                                              const bool success,
+                                              const std::string& reasonCode,
+                                              const std::string& reasonMessage) const
+    {
+        auto sig = Message::CreateSignal(
+            _path,
+            _interfaceName,
+            "ConnectResult"
+        );
+
+        sig.SetArgs(requestId, success, reasonCode, reasonMessage);
+        sig.Send(_conn);
+    }
+
     void NetworkWifiDevice::EmitAccessPointAdded(const ObjectPath& path) const
     {
         auto sig = Message::CreateSignal(

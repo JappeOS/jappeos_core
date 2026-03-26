@@ -173,6 +173,37 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             );
             return true;
         }
+
+        std::string ActiveConnectionStateReasonToString(const unsigned int reason)
+        {
+            switch (reason)
+            {
+                case NM_ACTIVE_CONNECTION_STATE_REASON_NONE:                  return "none";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_USER_DISCONNECTED:     return "userDisconnected";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_DEVICE_DISCONNECTED:   return "deviceDisconnected";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_SERVICE_STOPPED:       return "serviceStopped";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_IP_CONFIG_INVALID:     return "ipConfigInvalid";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_CONNECT_TIMEOUT:       return "connectTimeout";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_SERVICE_START_TIMEOUT: return "serviceStartTimeout";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_SERVICE_START_FAILED:  return "serviceStartFailed";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_NO_SECRETS:            return "noSecrets";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_LOGIN_FAILED:          return "loginFailed";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_CONNECTION_REMOVED:    return "connectionRemoved";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_DEPENDENCY_FAILED:     return "dependencyFailed";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_DEVICE_REALIZE_FAILED: return "deviceRealizeFailed";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_DEVICE_REMOVED:        return "deviceRemoved";
+                case NM_ACTIVE_CONNECTION_STATE_REASON_UNKNOWN:
+                default:                                                      return "unknown";
+            }
+        }
+
+        struct WifiConnectAsyncContext
+        {
+            NetworkManagerService* self;
+            uint64_t requestId;
+            ObjectPath devicePath;
+            std::string ssid;
+        };
     }
 
     NetworkManagerService::NetworkManagerService(ServiceManager* serviceManager,
@@ -270,6 +301,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             throw DBusException(DBUS_ERROR_FAILED, "Device is not a Wi-Fi device");
 
         auto* wifi = NM_DEVICE_WIFI(nmDev);
+        const uint64_t requestId = _nextWifiConnectRequestId++;
 
         const std::string requestedSecurity = NormalizeSecurity(security);
         NMAccessPoint* selectedAp = nullptr;
@@ -340,11 +372,56 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                     nmDev,
                     apPath.c_str(),
                     nullptr,
-                    nullptr,
-                    nullptr
+                    +[](GObject* sourceObject, GAsyncResult* result, gpointer userData)
+                    {
+                        auto ctx = std::unique_ptr<WifiConnectAsyncContext>(
+                            static_cast<WifiConnectAsyncContext*>(userData)
+                        );
+
+                        GError* error = nullptr;
+                        auto* ac = nm_client_activate_connection_finish(
+                            NM_CLIENT(sourceObject),
+                            result,
+                            &error
+                        );
+
+                        if (!ac)
+                        {
+                            const std::string errorMessage =
+                                error && error->message
+                                    ? error->message
+                                    : "Activation request was rejected";
+
+                            if (error)
+                                g_error_free(error);
+
+                            ctx->self->EmitWifiConnectResult(
+                                ctx->devicePath,
+                                ctx->requestId,
+                                false,
+                                "activationStartFailed",
+                                errorMessage
+                            );
+                            return;
+                        }
+
+                        ctx->self->TrackPendingWifiConnectRequest(
+                            ac,
+                            ctx->requestId,
+                            ctx->devicePath,
+                            ctx->ssid
+                        );
+                    },
+                    new WifiConnectAsyncContext{
+                        this,
+                        requestId,
+                        dev._path,
+                        ssid
+                    }
                 );
 
                 auto reply = Message::CreateMethodReturn(message);
+                reply.SetArgs(requestId);
                 reply.Send(*_conn);
                 return;
             }
@@ -402,13 +479,58 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             nmDev,
             apPath.c_str(),
             nullptr,
-            nullptr,
-            nullptr
+            +[](GObject* sourceObject, GAsyncResult* result, gpointer userData)
+            {
+                auto ctx = std::unique_ptr<WifiConnectAsyncContext>(
+                    static_cast<WifiConnectAsyncContext*>(userData)
+                );
+
+                GError* error = nullptr;
+                auto* ac = nm_client_add_and_activate_connection_finish(
+                    NM_CLIENT(sourceObject),
+                    result,
+                    &error
+                );
+
+                if (!ac)
+                {
+                    const std::string errorMessage =
+                        error && error->message
+                            ? error->message
+                            : "Add-and-activate request was rejected";
+
+                    if (error)
+                        g_error_free(error);
+
+                    ctx->self->EmitWifiConnectResult(
+                        ctx->devicePath,
+                        ctx->requestId,
+                        false,
+                        "activationStartFailed",
+                        errorMessage
+                    );
+                    return;
+                }
+
+                ctx->self->TrackPendingWifiConnectRequest(
+                    ac,
+                    ctx->requestId,
+                    ctx->devicePath,
+                    ctx->ssid
+                );
+            },
+            new WifiConnectAsyncContext{
+                this,
+                requestId,
+                dev._path,
+                ssid
+            }
         );
 
         g_object_unref(connection);
 
         auto reply = Message::CreateMethodReturn(message);
+        reply.SetArgs(requestId);
         reply.Send(*_conn);
     }
 
@@ -688,6 +810,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         if (!_nmClient)
             return;
 
+        FailAllPendingWifiConnectRequests(
+            "network_manager_unavailable",
+            "NetworkManager disappeared during connection attempt"
+        );
+
         for (const auto &path: _devices | std::views::keys)
         {
             EmitDeviceRemoved(path);
@@ -911,6 +1038,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             return;
 
         EmitDeviceRemoved(path);
+        FailPendingWifiConnectRequestsForDevice(
+            path,
+            "device_removed",
+            "Device disappeared during connection attempt"
+        );
 
         const auto connPath = it->second->GetActiveConnection();
         if (connPath != ObjectPath{})
@@ -1147,8 +1279,143 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             : nullptr;
     }
 
+    void NetworkManagerService::TrackPendingWifiConnectRequest(NMActiveConnection* ac,
+                                                               const uint64_t requestId,
+                                                               const ObjectPath& devicePath,
+                                                               const std::string& ssid)
+    {
+        const char* activePath = nm_object_get_path(NM_OBJECT(ac));
+        if (!activePath || activePath[0] == '\0')
+        {
+            EmitWifiConnectResult(
+                devicePath,
+                requestId,
+                false,
+                "activationStartFailed",
+                "Active connection path is missing"
+            );
+            return;
+        }
+
+        _pendingWifiConnectRequests[activePath] = PendingWifiConnectRequest{
+            requestId,
+            devicePath,
+            ssid
+        };
+
+        SubscribeToActiveConnectionSignals(ac);
+        ResolvePendingWifiConnectRequest(ac);
+    }
+
+    void NetworkManagerService::ResolvePendingWifiConnectRequest(NMActiveConnection* ac)
+    {
+        const char* activePath = nm_object_get_path(NM_OBJECT(ac));
+        if (!activePath || activePath[0] == '\0')
+            return;
+
+        const auto it = _pendingWifiConnectRequests.find(activePath);
+        if (it == _pendingWifiConnectRequests.end())
+            return;
+
+        const auto state = nm_active_connection_get_state(ac);
+
+        if (state == NM_ACTIVE_CONNECTION_STATE_ACTIVATED)
+        {
+            EmitWifiConnectResult(
+                it->second.devicePath,
+                it->second.requestId,
+                true,
+                "activated",
+                ""
+            );
+            _pendingWifiConnectRequests.erase(it);
+            return;
+        }
+
+        if (state == NM_ACTIVE_CONNECTION_STATE_DEACTIVATED || state == NM_ACTIVE_CONNECTION_STATE_UNKNOWN)
+        {
+            const auto reasonCode = ActiveConnectionStateReasonToString(
+                nm_active_connection_get_state_reason(ac)
+            );
+
+            EmitWifiConnectResult(
+                it->second.devicePath,
+                it->second.requestId,
+                false,
+                reasonCode,
+                "Connection activation failed"
+            );
+            _pendingWifiConnectRequests.erase(it);
+        }
+    }
+
+    void NetworkManagerService::FailPendingWifiConnectRequestsForDevice(const ObjectPath& devicePath,
+                                                                        const std::string& reasonCode,
+                                                                        const std::string& reasonMessage)
+    {
+        for (auto it = _pendingWifiConnectRequests.begin(); it != _pendingWifiConnectRequests.end();)
+        {
+            if (it->second.devicePath != devicePath)
+            {
+                ++it;
+                continue;
+            }
+
+            EmitWifiConnectResult(
+                it->second.devicePath,
+                it->second.requestId,
+                false,
+                reasonCode,
+                reasonMessage
+            );
+
+            it = _pendingWifiConnectRequests.erase(it);
+        }
+    }
+
+    void NetworkManagerService::FailAllPendingWifiConnectRequests(const std::string& reasonCode,
+                                                                  const std::string& reasonMessage)
+    {
+        for (const auto& [_, request] : _pendingWifiConnectRequests)
+        {
+            EmitWifiConnectResult(
+                request.devicePath,
+                request.requestId,
+                false,
+                reasonCode,
+                reasonMessage
+            );
+        }
+
+        _pendingWifiConnectRequests.clear();
+    }
+
+    void NetworkManagerService::EmitWifiConnectResult(const ObjectPath& devicePath,
+                                                      const uint64_t requestId,
+                                                      const bool success,
+                                                      const std::string& reasonCode,
+                                                      const std::string& reasonMessage)
+    {
+        const auto it = _devices.find(devicePath);
+        if (it == _devices.end())
+            return;
+
+        auto* wifiDev = dynamic_cast<NetworkWifiDevice*>(it->second.get());
+        if (!wifiDev)
+            return;
+
+        wifiDev->EmitConnectResult(
+            requestId,
+            success,
+            reasonCode,
+            reasonMessage
+        );
+    }
+
     void NetworkManagerService::OnActiveConnectionStateChanged(NMActiveConnection* ac)
     {
+        ResolvePendingWifiConnectRequest(ac);
+
         auto* conn = FindConnection(ac);
         if (!conn)
             return;

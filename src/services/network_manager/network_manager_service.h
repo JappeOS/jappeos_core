@@ -53,11 +53,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void WifiSetEnabled(NetworkWifiDevice& dev, bool enabled, const Message& message);
 
     private:
+        struct PendingWifiConnectRequest
+        {
+            uint64_t   requestId;
+            ObjectPath devicePath;
+            std::string ssid;
+        };
+
         Object     _object;
         Interface& _iface;
         NMClient*  _nmClient = nullptr;
         std::unordered_map<ObjectPath, std::unique_ptr<NetworkDevice>, ObjectPathHash>     _devices;
         std::unordered_map<ObjectPath, std::unique_ptr<NetworkConnection>, ObjectPathHash> _connections;
+        std::unordered_map<std::string, PendingWifiConnectRequest> _pendingWifiConnectRequests;
+        uint64_t _nextWifiConnectRequestId = 1;
 
         std::unique_ptr<SignalSubscription> _subNameOwnerChanged;
 
@@ -88,6 +97,21 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void SubscribeToActiveConnectionSignals(NMActiveConnection* ac);
         void SubscribeToWifiSignalStrength(NMDeviceWifi* nmDev, NetworkConnection& conn);
         NetworkConnection* FindConnection(NMActiveConnection* ac);
+        void TrackPendingWifiConnectRequest(NMActiveConnection* ac,
+                                            uint64_t requestId,
+                                            const ObjectPath& devicePath,
+                                            const std::string& ssid);
+        void ResolvePendingWifiConnectRequest(NMActiveConnection* ac);
+        void FailPendingWifiConnectRequestsForDevice(const ObjectPath& devicePath,
+                                                     const std::string& reasonCode,
+                                                     const std::string& reasonMessage);
+        void FailAllPendingWifiConnectRequests(const std::string& reasonCode,
+                                               const std::string& reasonMessage);
+        void EmitWifiConnectResult(const ObjectPath& devicePath,
+                                   uint64_t requestId,
+                                   bool success,
+                                   const std::string& reasonCode,
+                                   const std::string& reasonMessage);
         void OnActiveConnectionStateChanged(NMActiveConnection* ac);
         void OnActiveConnectionIpChanged(NMActiveConnection* ac);
         void OnAccessPointStrengthChanged(NMAccessPoint* ap);
