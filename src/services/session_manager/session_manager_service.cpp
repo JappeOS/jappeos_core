@@ -835,28 +835,44 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             throw std::runtime_error(std::string("Failed to get user: ") + username);
         }
 
-        outServiceName = "session@" + sessionId + ".service";
-        auto msg = Message::CreateMethodCall(
+        std::vector<std::tuple<std::string, DBusVariant>> properties{};
+        std::vector<std::tuple<
+            std::string,
+            std::vector<std::string>,
+            bool>> execStart{};
+
+        const std::string serviceName = "session@" + sessionId + ".service";
+        outServiceName = serviceName;
+
+        const std::string runtimeDir = "/run/user/" + std::to_string(pwd->pw_uid);
+        const std::string envRuntimeDir = "XDG_RUNTIME_DIR=" + runtimeDir;
+        const std::string envSessionBusAddr = std::format("DBUS_SESSION_BUS_ADDRESS=unix:path={}/bus", runtimeDir);
+        const std::string envSeat = "XDG_SEAT=" + seat;
+        const std::string envSessionClass = "XDG_SESSION_CLASS=user";
+
+        // Spawn the compositor, a.k.a the main process of the session:
+
+        auto msg1 = Message::CreateMethodCall(
             "org.freedesktop.systemd1",
             ObjectPath("/org/freedesktop/systemd1"),
             InterfaceName("org.freedesktop.systemd1.Manager"),
             "StartTransientUnit"
         );
 
-        std::vector<std::tuple<std::string, DBusVariant>> properties{};
         properties.emplace_back("Description", DBusVariant::make<std::string>("Desktop Session"));
         properties.emplace_back("Slice",       DBusVariant::make<std::string>("session.slice"));
         properties.emplace_back("User",        DBusVariant::make<std::string>(std::string(username)));
 
-        const std::string path = isLoginSession ? JOS_GREETER_BINARY : JOS_DESKTOP_BINARY;
-        auto lib = path.substr(0, path.find_last_of('/')) + "/lib";
-        auto bin = path.substr(0, path.find_last_of('/')) + "/bin";
+        const std::string dePath = isLoginSession ? JOS_GREETER_BINARY : JOS_DESKTOP_BINARY;
+        auto lib = dePath.substr(0, dePath.find_last_of('/')) + "/lib";
+        auto bin = dePath.substr(0, dePath.find_last_of('/')) + "/bin";
         properties.emplace_back("Environment", DBusVariant::make<std::vector<std::string>>({
+            envRuntimeDir,
+            envSessionBusAddr,
+            envSeat,
+            envSessionClass,
             "XDG_SESSION_TYPE=wayland",
             "XDG_CURRENT_DESKTOP=" + std::string(JOS_DESKTOP_NAME),
-            "XDG_RUNTIME_DIR=/run/user/" + std::to_string(pwd->pw_uid),
-            "XDG_SEAT=" + seat,
-            "XDG_SESSION_CLASS=user",
             "ZENITH_MULTI_MONITOR_MODE=extend",
             "LIBSEAT_BACKEND=logind",
             std::vformat("LD_LIBRARY_PATH=/usr/lib:/lib:{}", std::make_format_args(lib)),
@@ -866,36 +882,68 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             ),
         }));
 
-        std::vector<std::tuple<
-            std::string,
-            std::vector<std::string>,
-            bool>> execStart{};
-
         execStart.push_back(std::make_tuple(
-            path,                 // path
-            std::vector{path}, // args
+            dePath,                 // path
+            std::vector{dePath},    // args
             false                 // isShell
         ));
 
-        properties.emplace_back("ExecStart",             DBusVariant::make(execStart));
-        /*properties.emplace_back("Restart",               DBusVariant::make(std::string("on-failure")));
-        properties.emplace_back("RestartSec",            DBusVariant::make(std::string("1s")));
-        properties.emplace_back("StartLimitIntervalSec", DBusVariant::make(std::string("60s")));
-        properties.emplace_back("StartLimitBurst",       DBusVariant::make<int32_t>(10));*/
-        properties.emplace_back("Type", DBusVariant::make(std::string("simple")));
-        /*properties.emplace_back("Restart", DBusVariant::make(std::string("on-failure")));
-        properties.emplace_back("RestartUSec", DBusVariant::make<uint64_t>(1500000)); // 1s 500ms
-        properties.emplace_back("StartLimitIntervalUSec", DBusVariant::make<uint64_t>(60ULL * 1000000ULL)); // 30s
-        properties.emplace_back("StartLimitBurst", DBusVariant::make<uint32_t>(5));*/
+        properties.emplace_back("ExecStart", DBusVariant::make(execStart));
+        properties.emplace_back("Type",      DBusVariant::make(std::string("simple")));
 
-        msg.SetArgs(
+        msg1.SetArgs(
             outServiceName,            // name
-            std::string("replace"),  // mode
+            std::string("replace"),    // mode
             properties,                // properties
             std::vector<std::tuple<std::string, std::vector<std::tuple<std::string, DBusVariant>>>>{} // aux units
         );
 
-        msg.SendWithReplyIgnore(*_conn);
+        msg1.SendWithReplyIgnore(*_conn);
+        properties.clear();
+        execStart.clear();
+
+        // Spawn the session daemon, it's like jappeos_core, but on session level:
+
+        auto msg2 = Message::CreateMethodCall(
+            "org.freedesktop.systemd1",
+            ObjectPath("/org/freedesktop/systemd1"),
+            InterfaceName("org.freedesktop.systemd1.Manager"),
+            "StartTransientUnit"
+        );
+
+        properties.emplace_back("Description", DBusVariant::make<std::string>("Session Daemon"));
+        properties.emplace_back("Slice",       DBusVariant::make<std::string>("session.slice"));
+        properties.emplace_back("User",        DBusVariant::make<std::string>(std::string(username)));
+        properties.emplace_back("Environment", DBusVariant::make<std::vector<std::string>>({
+            envRuntimeDir,
+            envSessionBusAddr,
+            envSeat,
+            envSessionClass,
+        }));
+        properties.emplace_back("PartOf",      DBusVariant::make<std::string>(std::string(serviceName)));
+        properties.emplace_back("After",       DBusVariant::make<std::string>(std::string(serviceName)));
+        properties.emplace_back("Requires",    DBusVariant::make<std::string>(std::string(serviceName)));
+        properties.emplace_back("Restart",     DBusVariant::make<std::string>("on-failure"));
+        properties.emplace_back("RestartUSec", DBusVariant::make<uint64_t>(1500000)); // 1s 500ms
+
+        const std::string sePath = JOS_CORE_SESSION_BINARY;
+        execStart.push_back(std::make_tuple(
+            sePath,                  // path
+            std::vector<std::string>{sePath, "-t", isLoginSession ? "greeter" : "desktop"}, // args
+            false                    // isShell
+        ));
+
+        properties.emplace_back("ExecStart", DBusVariant::make(execStart));
+        properties.emplace_back("Type",      DBusVariant::make(std::string("simple")));
+
+        msg2.SetArgs(
+            "session-daemon@" + sessionId + ".service", // name
+            std::string("replace"),                     // mode
+            properties,                                 // properties
+            std::vector<std::tuple<std::string, std::vector<std::tuple<std::string, DBusVariant>>>>{} // aux units
+        );
+
+        msg2.SendWithReplyIgnore(*_conn);
     }
 
     void SessionManagerService::ActivateLogindSession(const std::string& sessionId, const std::string& seat) const
@@ -1300,7 +1348,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return next;
     }
 
-    int SessionManagerService::ActivateTTY(int vt)
+    int SessionManagerService::ActivateTTY(const int vt)
     {
         if (vt <= 0)
             return -1;
