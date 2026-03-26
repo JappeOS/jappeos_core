@@ -69,7 +69,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::PowerManager
         template<typename T>
         void EmitPropertyChanged(const std::string& property, const T& value)
         {
-            Log().Debug("EmitPropertyChanged on " + property);
             Utils::DBusUtils::EmitPropertyChanged(_conn, _iface, property, value);
         }
 
