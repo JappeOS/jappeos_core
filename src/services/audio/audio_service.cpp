@@ -47,6 +47,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
         AudioService* self = nullptr;
         uint32_t id = std::numeric_limits<uint32_t>::max();
         pw_node* node = nullptr;
+        uint32_t channelCount = 0;
         spa_hook listener{};
     };
 
@@ -795,13 +796,26 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
         if (parseResult < 0)
             return;
 
-        std::optional<double> parsedVolume;
-        if (hasVolumeProp && volume >= 0.0f)
+        if (
+            hasChannelVolumesProp &&
+            nChannelVolumes > 0 &&
+            channelValuesRaw &&
+            channelValueType == SPA_TYPE_Float &&
+            channelValueSize == sizeof(float)
+        )
         {
-            parsedVolume = ClampVolume(volume);
+            if (const auto itNode = _nodeProxies.find(id); itNode != _nodeProxies.end() && itNode->second)
+                itNode->second->channelCount = nChannelVolumes;
         }
-        else if (
-            !hasMuteProp &&
+
+        const std::optional<bool> parsedMuted = hasMuteProp
+            ? std::make_optional(muted)
+            : std::nullopt;
+        const bool skipVolumeUpdate = parsedMuted.has_value() && *parsedMuted;
+
+        std::optional<double> parsedVolume;
+        if (
+            !skipVolumeUpdate &&
             hasChannelVolumesProp &&
             nChannelVolumes > 0 &&
             channelValuesRaw &&
@@ -817,10 +831,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
                 sum += channelVolumes[i];
             parsedVolume = ClampVolume(sum / static_cast<double>(nChannelVolumes));
         }
-
-        const std::optional<bool> parsedMuted = hasMuteProp
-            ? std::make_optional(muted)
-            : std::nullopt;
+        else if (!skipVolumeUpdate && hasVolumeProp && volume >= 0.0f)
+        {
+            parsedVolume = ClampVolume(volume);
+        }
 
         if (const auto devPath = FindDevicePathByNodeId(id); devPath != ObjectPath{})
         {
@@ -951,14 +965,38 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
             throw DBusException(DBUS_ERROR_FAILED, "PipeWire node is not available");
 
         const float vol = static_cast<float>(ClampVolume(volume));
+        const uint32_t channelCount = itNode->second->channelCount;
+        std::vector<float> channelVolumes;
+        if (channelCount > 0)
+            channelVolumes.assign(channelCount, vol);
+
         uint8_t buffer[256];
         spa_pod_builder builder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
-        const spa_pod* param = reinterpret_cast<spa_pod*>(spa_pod_builder_add_object(
-            &builder,
-            SPA_TYPE_OBJECT_Props,
-            SPA_PARAM_Props,
-            SPA_PROP_volume, SPA_POD_Float(vol)
-        ));
+        const spa_pod* param = nullptr;
+        if (!channelVolumes.empty())
+        {
+            param = reinterpret_cast<spa_pod*>(spa_pod_builder_add_object(
+                &builder,
+                SPA_TYPE_OBJECT_Props,
+                SPA_PARAM_Props,
+                SPA_PROP_volume, SPA_POD_Float(vol),
+                SPA_PROP_channelVolumes, SPA_POD_Array(
+                    sizeof(float),
+                    SPA_TYPE_Float,
+                    channelVolumes.size(),
+                    channelVolumes.data()
+                )
+            ));
+        }
+        else
+        {
+            param = reinterpret_cast<spa_pod*>(spa_pod_builder_add_object(
+                &builder,
+                SPA_TYPE_OBJECT_Props,
+                SPA_PARAM_Props,
+                SPA_PROP_volume, SPA_POD_Float(vol)
+            ));
+        }
 
         pw_thread_loop_lock(_pwThreadLoop);
         const int result = pw_node_set_param(itNode->second->node, SPA_PARAM_Props, 0, param);
@@ -973,16 +1011,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
     void AudioService::SetNodeMutedByPath(const ObjectPath& path, const bool muted)
     {
         uint32_t nodeId = INVALID_ID;
-        double currentVolume = 1.0;
         if (const auto it = _devices.find(path); it != _devices.end())
         {
             nodeId = it->second->_pwNodeId;
-            currentVolume = it->second->_volume.Get();
         }
         else if (const auto it = _streams.find(path); it != _streams.end())
         {
             nodeId = it->second->_pwNodeId;
-            currentVolume = it->second->_volume.Get();
         }
 
         if (nodeId == INVALID_ID)
@@ -994,12 +1029,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
 
         uint8_t buffer[256];
         spa_pod_builder builder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
-        const float vol = static_cast<float>(ClampVolume(currentVolume));
         const spa_pod* param = reinterpret_cast<spa_pod*>(spa_pod_builder_add_object(
             &builder,
             SPA_TYPE_OBJECT_Props,
             SPA_PARAM_Props,
-            SPA_PROP_volume, SPA_POD_Float(vol),
             SPA_PROP_mute, SPA_POD_Bool(muted)
         ));
 
