@@ -19,21 +19,49 @@
 #pragma once
 #include "audio_service.h"
 
+#include <limits>
+
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
 {
     class AudioDevice
     {
+        friend class AudioService;
+
     public:
         AudioDevice(AudioService& source,
                     Connection& connection,
                     ObjectPath objectPath);
 
+        [[nodiscard]] std::string GetId() const        { return _id.Get(); }
+        [[nodiscard]] std::string GetName() const      { return _name.Get(); }
+        [[nodiscard]] std::string GetType() const      { return _type.Get(); }
+        [[nodiscard]] std::string GetDirection() const { return _direction.Get(); }
+        [[nodiscard]] double GetVolume() const         { return _volume.Get(); }
+        [[nodiscard]] bool GetMuted() const            { return _muted.Get(); }
+        [[nodiscard]] bool GetAvailable() const        { return _available.Get(); }
+
     private:
+        void OnSetVolume(double volume);
+        void OnSetMuted(bool muted);
+
         AudioService& _source;
-        Connection& _conn;
-        ObjectPath _path;
-        Object _object;
+        Connection&   _conn;
+        ObjectPath    _path;
+        Object        _object;
         InterfaceName _interfaceName;
-        Interface& _iface;
+        Interface&    _iface;
+
+        Prop<std::string> _id;
+        Prop<std::string> _name;
+        Prop<std::string> _type;
+        Prop<std::string> _direction;
+        Prop<double>      _volume;
+        Prop<bool>        _muted;
+        Prop<bool>        _available;
+
+        uint32_t _pwNodeId = std::numeric_limits<uint32_t>::max();
+        std::string _pwNodeName;
+        std::string _pwObjectSerial;
+        bool _suppressPropertyCallbacks = false;
     };
 }

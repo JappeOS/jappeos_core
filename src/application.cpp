@@ -190,6 +190,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         const auto logger = _serviceManager->Register<Services::Logger::StdoutLogger>();
         NULL_SAFE_CALL(logger, Debug("Initializing..."));
+        NULL_SAFE_CALL(logger, Debug(std::string("D-Bus name acquired: ") + DBUS_INTERFACE));
         InitServices();
         NULL_SAFE_CALL(logger, Debug("Initialization done!"));
     }

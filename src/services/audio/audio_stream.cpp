@@ -29,7 +29,36 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
                              _path(std::move(objectPath)),
                              _object(_conn, _path),
                              _interfaceName(source.GetBaseInterface().Child("Stream")),
-                             _iface(_object.CreateInterface(_interfaceName))
-    {}
+                             _iface(_object.CreateInterface(_interfaceName)),
+                             _id             (_conn, _iface, "Id", ""),
+                             _name           (_conn, _iface, "Name", ""),
+                             _applicationName(_conn, _iface, "ApplicationName", ""),
+                             _direction      (_conn, _iface, "Direction", ""),
+                             _device         (_conn, _iface, "Device", ObjectPath{}, true, [this](const ObjectPath& val) { OnSetDevice(val); }),
+                             _volume         (_conn, _iface, "Volume", 1.0, true, [this](const double& val) { OnSetVolume(val); }),
+                             _muted          (_conn, _iface, "Muted", false, true, [this](const bool& val) { OnSetMuted(val); })
+    {
+    }
+
+    void AudioStream::OnSetDevice(const ObjectPath& devicePath)
+    {
+        if (_suppressPropertyCallbacks)
+            return;
+        _source.SetStreamDevice(*this, devicePath);
+    }
+
+    void AudioStream::OnSetVolume(const double volume)
+    {
+        if (_suppressPropertyCallbacks)
+            return;
+        _source.SetStreamVolume(*this, volume);
+    }
+
+    void AudioStream::OnSetMuted(const bool muted)
+    {
+        if (_suppressPropertyCallbacks)
+            return;
+        _source.SetStreamMuted(*this, muted);
+    }
 
 }

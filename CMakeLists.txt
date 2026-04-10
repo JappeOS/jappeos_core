@@ -9,6 +9,7 @@ pkg_check_modules(DBUS REQUIRED dbus-1)
 pkg_check_modules(PAM REQUIRED pam)
 pkg_check_modules(GLIB REQUIRED glib-2.0)
 pkg_check_modules(LIBNM REQUIRED libnm)
+pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
 
 set(JAPPEOS_COMMON_SOURCES
         src/main.cpp
@@ -77,6 +78,7 @@ function(jappeos_configure_target target_name)
             ${PAM_INCLUDE_DIRS}
             ${GLIB_INCLUDE_DIRS}
             ${LIBNM_INCLUDE_DIRS}
+            ${PIPEWIRE_INCLUDE_DIRS}
     )
 
     target_compile_options(${target_name} PRIVATE
@@ -96,6 +98,7 @@ function(jappeos_configure_target target_name)
             ${PAM_CFLAGS_OTHER}
             ${GLIB_CFLAGS_OTHER}
             ${LIBNM_CFLAGS_OTHER}
+            ${PIPEWIRE_CFLAGS_OTHER}
     )
 
     target_link_options(${target_name} PRIVATE
@@ -107,6 +110,7 @@ function(jappeos_configure_target target_name)
             ${PAM_LIBRARIES}
             ${GLIB_LIBRARIES}
             ${LIBNM_LIBRARIES}
+            ${PIPEWIRE_LIBRARIES}
     )
 endfunction()
 
