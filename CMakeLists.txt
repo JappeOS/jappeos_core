@@ -10,6 +10,8 @@ pkg_check_modules(PAM REQUIRED pam)
 pkg_check_modules(GLIB REQUIRED glib-2.0)
 pkg_check_modules(LIBNM REQUIRED libnm)
 pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
+pkg_check_modules(PULSE REQUIRED libpulse)
+pkg_check_modules(PULSE_GLIB REQUIRED libpulse-mainloop-glib)
 
 set(JAPPEOS_COMMON_SOURCES
         src/main.cpp
@@ -68,6 +70,12 @@ set(JAPPEOS_SESSION_SOURCES
         src/services/audio/audio_device.h
         src/services/audio/audio_stream.cpp
         src/services/audio/audio_stream.h
+        src/services/audio_pulse/audio_service.cpp
+        src/services/audio_pulse/audio_service.h
+        src/services/audio_pulse/audio_device.cpp
+        src/services/audio_pulse/audio_device.h
+        src/services/audio_pulse/audio_stream.cpp
+        src/services/audio_pulse/audio_stream.h
 )
 
 function(jappeos_configure_target target_name)
@@ -79,6 +87,8 @@ function(jappeos_configure_target target_name)
             ${GLIB_INCLUDE_DIRS}
             ${LIBNM_INCLUDE_DIRS}
             ${PIPEWIRE_INCLUDE_DIRS}
+            ${PULSE_INCLUDE_DIRS}
+            ${PULSE_GLIB_INCLUDE_DIRS}
     )
 
     target_compile_options(${target_name} PRIVATE
@@ -99,6 +109,8 @@ function(jappeos_configure_target target_name)
             ${GLIB_CFLAGS_OTHER}
             ${LIBNM_CFLAGS_OTHER}
             ${PIPEWIRE_CFLAGS_OTHER}
+            ${PULSE_CFLAGS_OTHER}
+            ${PULSE_GLIB_CFLAGS_OTHER}
     )
 
     target_link_options(${target_name} PRIVATE
@@ -111,6 +123,8 @@ function(jappeos_configure_target target_name)
             ${GLIB_LIBRARIES}
             ${LIBNM_LIBRARIES}
             ${PIPEWIRE_LIBRARIES}
+            ${PULSE_LIBRARIES}
+            ${PULSE_GLIB_LIBRARIES}
     )
 endfunction()
 

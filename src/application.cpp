@@ -26,7 +26,7 @@
 
 #include "services/watchdog/watchdog_service.h"
 #if defined(JAPPEOS_DAEMON_SESSION)
-#include "services/audio/audio_service.h"
+#include "services/audio_pulse/audio_service.h"
 #endif
 #if defined(JAPPEOS_DAEMON_SYSTEM) || !defined(JAPPEOS_DAEMON_SESSION)
 #include "services/account_manager/account_manager_service.h"
@@ -227,7 +227,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         _serviceManager->Register<Services::Watchdog::WatchdogService>();
 #if defined(JAPPEOS_DAEMON_SESSION)
-        _serviceManager->Register<Services::Audio::AudioService>();
+        _serviceManager->Register<Services::AudioPulse::AudioService>();
 #endif
 #if defined(JAPPEOS_DAEMON_SYSTEM) || !defined(JAPPEOS_DAEMON_SESSION)
         _serviceManager->Register<Services::SessionManager::SessionManagerService>();
