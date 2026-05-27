@@ -20,10 +20,15 @@
 
 #include "../service.h"
 
+#include <cstdint>
+#include <vector>
+
 typedef struct pw_thread_loop pw_thread_loop;
 typedef struct pw_context pw_context;
 typedef struct pw_core pw_core;
 typedef struct pw_registry pw_registry;
+typedef struct pw_device pw_device;
+typedef struct pw_device_info pw_device_info;
 typedef struct pw_metadata pw_metadata;
 typedef struct spa_hook spa_hook;
 typedef struct spa_dict spa_dict;
@@ -52,13 +57,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
 
     private:
         struct NodeProxyData;
+        struct DeviceProxyData;
         struct MetadataProxyData;
 
         Object     _object;
         Interface& _iface;
-        Prop<ObjectPath> _activeInputDevice;
-        Prop<ObjectPath> _activeOutputDevice;
-        bool _suppressActiveCallbacks = false;
+        ObjectPath _activeInputDevice;
+        ObjectPath _activeOutputDevice;
+        ObjectPath _pendingOutputDevice;
+        ObjectPath _pendingInputDevice;
 
         pw_thread_loop* _pwThreadLoop = nullptr;
         pw_context*     _pwContext = nullptr;
@@ -69,9 +76,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
 
         std::unordered_map<ObjectPath, std::unique_ptr<AudioDevice>, ObjectPathHash> _devices;
         std::unordered_map<ObjectPath, std::unique_ptr<AudioStream>, ObjectPathHash> _streams;
-        std::unordered_map<uint32_t, ObjectPath> _devicePathsByNodeId;
+        std::unordered_map<uint32_t, std::vector<ObjectPath>> _devicePathsByNodeId;
         std::unordered_map<uint32_t, ObjectPath> _streamPathsByNodeId;
         std::unordered_map<uint32_t, std::unique_ptr<NodeProxyData>> _nodeProxies;
+        std::unordered_map<uint32_t, std::unique_ptr<DeviceProxyData>> _deviceProxies;
+        std::unordered_map<uint32_t, std::string> _routeDeviceNamesById;
+        std::unordered_map<uint32_t, std::string> _routeDeviceDescriptionsById;
         std::unique_ptr<MetadataProxyData> _metadataProxy;
 
         void SharedPolicy(const Message& message) const;
@@ -88,8 +98,25 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
         void RemoveDeviceNode(uint32_t id);
         void RemoveStreamNode(uint32_t id);
         void BindNodeProxy(uint32_t id);
+        void BindDeviceProxy(uint32_t id);
+        void HandleDeviceInfo(uint32_t deviceId, const pw_device_info* info);
         void HandleNodeInfo(uint32_t id, const spa_dict* props);
         void HandleNodePropsParam(uint32_t id, const spa_pod* param);
+        void HandleDeviceRouteParam(uint32_t deviceId, uint32_t paramId, const spa_pod* param);
+        void RefreshLogicalDevicesForRouteDevice(uint32_t routeDeviceId);
+        void RefreshActiveDevicesForNode(uint32_t nodeId);
+        void SetRouteByDevicePath(const ObjectPath& path);
+        void AddLogicalDevice(const ObjectPath& path,
+                              uint32_t nodeId,
+                              uint32_t routeDeviceId,
+                              int32_t cardProfileDevice,
+                              int32_t routeIndex,
+                              const std::string& name,
+                              const std::string& type,
+                              const std::string& direction,
+                              bool available);
+        void RemoveLogicalDevice(const ObjectPath& path);
+        void RebuildNodeDevicePaths(uint32_t nodeId);
 
         void BindMetadataProxy(uint32_t id);
         void HandleMetadataProperty(uint32_t subject, const char* key, const char* type, const char* value);
@@ -99,6 +126,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
         void SetDefaultDevice(bool inputDirection, const ObjectPath& path);
 
         [[nodiscard]] ObjectPath FindDevicePathByNodeId(uint32_t id) const;
+        [[nodiscard]] std::vector<ObjectPath> FindDevicePathsByNodeId(uint32_t id) const;
         [[nodiscard]] ObjectPath FindStreamPathByNodeId(uint32_t id) const;
         [[nodiscard]] ObjectPath FindDevicePathByTargetObject(const std::string& targetObject) const;
 

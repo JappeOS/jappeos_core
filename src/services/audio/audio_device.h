@@ -19,6 +19,7 @@
 #pragma once
 #include "audio_service.h"
 
+#include <cstdint>
 #include <limits>
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
@@ -60,6 +61,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Audio
         Prop<bool>        _available;
 
         uint32_t _pwNodeId = std::numeric_limits<uint32_t>::max();
+        uint32_t _pwDeviceId = std::numeric_limits<uint32_t>::max();
+        int32_t _pwCardProfileDevice = -1;
+        int32_t _pwRouteIndex = -1;
+        bool _pwRouteActive = false;
+        bool _pwIsRouteDevice = false;
         std::string _pwNodeName;
         std::string _pwObjectSerial;
         bool _suppressPropertyCallbacks = false;
