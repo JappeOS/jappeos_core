@@ -202,7 +202,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 
     void AudioService::OnSetActiveInputDevice(const ObjectPath& path)
     {
-        if (!_context)
+        if (!_context || _activeInputDevice == path)
             return;
 
         const auto it = _devices.find(path);
@@ -216,22 +216,29 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
             throw DBusException(DBUS_ERROR_INVALID_ARGS, "Failed to set stream device, target is not an input device");
         }
 
-        pa_operation* op = pa_context_set_default_source(
+        /*pa_operation* op = pa_context_set_default_source(
             _context,
             it->second->_name.Get().c_str(),
             nullptr,
             nullptr
         );
-
         if (op)
             pa_operation_unref(op);
+
+        SetSourcePort(it->second->_paIndex, it->second->_paPortName);*/
+
+        ActivateInputPortAndMakeDefault(
+            it->second->_paIndex,
+            it->second->_name.Get(),
+            it->second->_paPortName
+        );
 
         // TODO: We can move streams for input devices too, later, if needed.
     }
 
     void AudioService::OnSetActiveOutputDevice(const ObjectPath& path)
     {
-        if (!_context)
+        if (!_context || _activeOutputDevice == path)
             return;
 
         const auto it = _devices.find(path);
@@ -245,15 +252,22 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
             throw DBusException(DBUS_ERROR_INVALID_ARGS, "Failed to set stream device, target is not an output device");
         }
 
-        pa_operation* op = pa_context_set_default_sink(
+        /*pa_operation* op = pa_context_set_default_sink(
             _context,
             it->second->_name.Get().c_str(),
             nullptr,
             nullptr
         );
-
         if (op)
             pa_operation_unref(op);
+
+        SetSinkPort(it->second->_paIndex, it->second->_paPortName);*/
+
+        ActivateOutputPortAndMakeDefault(
+            it->second->_paIndex,
+            it->second->_name.Get(),
+            it->second->_paPortName
+        );
 
         for (const auto &stream: _streams | std::views::values)
         {
@@ -510,19 +524,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 
             const auto it = std::ranges::find_if(
                 _devices,
-                [newSourceName](const auto& pair)
+                [&](const auto& pair)
                 {
                     const auto& device = pair.second;
-                    return device && device->GetName() == newSourceName && device->GetDirection() == AUDIO_DIRECTION_IN;
+                    const auto it = _inActivePortByPaIndex.find(device->_paIndex);
+                    if (it == _inActivePortByPaIndex.end())
+                        return false;
+                    return device &&
+                        device->GetName() == newSourceName &&
+                        device->GetDirection() == AUDIO_DIRECTION_IN &&
+                        device->_paPortName == it->second;
                 }
             );
 
-            if (it != _devices.end())
-                _activeInputDevice = it->first;
-            else
-                _activeInputDevice = {};
-
-            Utils::DBusUtils::EmitPropertyChanged(*_conn, _iface, "ActiveInputDevice", _activeInputDevice);
+            HandleActiveInputDeviceChanged(it != _devices.end() ? it->first : ObjectPath{});
         }
 
         // Handle active output device update:
@@ -537,19 +552,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 
             const auto it = std::ranges::find_if(
                 _devices,
-                [newSinkName](const auto& pair)
+                [&](const auto& pair)
                 {
                     const auto& device = pair.second;
-                    return device && device->GetName() == newSinkName && device->GetDirection() == AUDIO_DIRECTION_OUT;
+                    const auto it = _outActivePortByPaIndex.find(device->_paIndex);
+                    if (it == _outActivePortByPaIndex.end())
+                        return false;
+                    return device &&
+                        device->GetName() == newSinkName &&
+                        device->GetDirection() == AUDIO_DIRECTION_OUT &&
+                        device->_paPortName == it->second;
                 }
             );
 
-            if (it != _devices.end())
-                _activeOutputDevice = it->first;
-            else
-                _activeOutputDevice = {};
-
-            Utils::DBusUtils::EmitPropertyChanged(*_conn, _iface, "ActiveOutputDevice", _activeOutputDevice);
+            HandleActiveOutputDeviceChanged(it != _devices.end() ? it->first : ObjectPath{});
         }
     }
 
@@ -583,46 +599,106 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
     void AudioService::AddOrUpdateOutputDevice(const pa_sink_info* info)
     {
         const auto index = info->index;
-        auto path = GetObjectPathForDevice(index, AUDIO_DIRECTION_OUT_BOOL);
+        const auto sinkName = info->name ? info->name : "";
 
-        const auto it = _devices.find(path);
+        auto& vec = _outDevicesByPaIndex[index];
+        auto stalePaths = vec;
 
-        AudioDevice* device = nullptr;
-        const bool exists = (it != _devices.end());
+        const auto activePort = info->active_port ? info->active_port : nullptr;
+        const auto activePortName = activePort
+                ? (activePort->name ? std::string(activePort->name) : std::string())
+                : std::string();
 
-        if (exists)
+        if (const auto existingPortName = _outActivePortByPaIndex[index]; existingPortName != activePortName)
+            HandleActiveOutputPortChanged(index, activePortName);
+        _outActivePortByPaIndex[index] = activePortName;
+
+        PortIterator(info->ports ? info->n_ports : 0, [&](const std::optional<uint32_t> port)
         {
-            device = it->second.get();
-        }
-        else
-        {
-            auto newDevice = std::make_unique<AudioDevice>(*this, *_conn, path);
-            device = newDevice.get();
-            _devices[path] = std::move(newDevice);
-        }
+            std::string portName;
+            if (port != std::nullopt)
+            {
+                const pa_sink_port_info* paPort = info->ports[port.value()];
+                if (!paPort || !paPort->name)
+                    return;
+                portName = paPort->name;
+            }
 
-        device->_suppressPropertyCallbacks = true;
+            auto path = GetObjectPathForDevice(index, AUDIO_DIRECTION_OUT_BOOL, portName);
+            stalePaths.erase(path);
+            vec.insert(path);
 
-        device->_paIndex = index;
-        device->_paChannels = info->channel_map.channels;
-        device->_id = AUDIO_DIRECTION_OUT + std::to_string(index);
-        device->_name = info->name ? info->name : "";
-        // TODO: Set type
-        device->_direction = AUDIO_DIRECTION_OUT;
-        device->_volume = pa_cvolume_avg(&info->volume) / static_cast<float>(PA_VOLUME_NORM);
-        device->_muted = info->mute;
+            const auto it = _devices.find(path);
 
-        device->_suppressPropertyCallbacks = false;
+            AudioDevice* device = nullptr;
+            const bool exists = (it != _devices.end());
 
-        if (!exists)
-            EmitDeviceAdded(path);
+            if (exists)
+            {
+                device = it->second.get();
+            }
+            else
+            {
+                auto newDevice = std::make_unique<AudioDevice>(*this, *_conn, path);
+                device = newDevice.get();
+                _devices.emplace(path, std::move(newDevice));
+            }
+
+            const char* formFactor = pa_proplist_gets(info->proplist, PA_PROP_DEVICE_FORM_FACTOR);
+
+            device->_suppressPropertyCallbacks = true;
+
+            device->_paIndex = index;
+            device->_paChannels = info->channel_map.channels;
+            device->_paPortName = portName;
+            device->_id = AUDIO_DIRECTION_OUT + std::to_string(index) + portName;
+            device->_name = sinkName;
+            device->_type = PaFormFactorToDeviceType(formFactor ? formFactor : "");
+            device->_direction = AUDIO_DIRECTION_OUT;
+            device->_volume = pa_cvolume_avg(&info->volume) / static_cast<float>(PA_VOLUME_NORM);
+            device->_muted = info->mute;
+
+            device->_suppressPropertyCallbacks = false;
+
+            if (!exists)
+                EmitDeviceAdded(path);
+
+            if (portName == activePortName && _defaultSinkName == sinkName)
+                HandleActiveOutputDeviceChanged(path);
+        });
+
+        for (const auto& path : stalePaths)
+            RemoveOutputDevice(path);
     }
 
-    void AudioService::RemoveOutputDevice(const uint32_t index)
+    void AudioService::RemoveOutputDevice(const ObjectPath& path)
     {
-        const auto path = GetObjectPathForDevice(index, AUDIO_DIRECTION_OUT_BOOL);
-        if (_devices.erase(path))
-            EmitDeviceRemoved(path);
+        const auto it = _devices.find(path);
+        if (it == _devices.end())
+            return;
+
+        if (const auto it2 = _outDevicesByPaIndex.find(it->second->_paIndex); it2 != _outDevicesByPaIndex.end())
+        {
+            it2->second.erase(path);
+            if (it2->second.empty())
+            {
+                _outDevicesByPaIndex.erase(it2);
+                _outActivePortByPaIndex.erase(it->second->_paIndex);
+            }
+        }
+
+        _devices.erase(path);
+        EmitDeviceRemoved(path);
+    }
+
+    void AudioService::RemoveOutputDevicesByIndex(const uint32_t index)
+    {
+        const auto it = _outDevicesByPaIndex.find(index);
+        if (it == _outDevicesByPaIndex.end())
+            return;
+
+        for (const auto& path : it->second)
+            RemoveOutputDevice(path);
     }
 
     void AudioService::HandleOutputDeviceChanged(const int event, const uint32_t index)
@@ -635,10 +711,31 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
                 break;
 
             case PA_SUBSCRIPTION_EVENT_REMOVE:
-                RemoveOutputDevice(index);
+                RemoveOutputDevicesByIndex(index);
                 break;
 
             default: break;
+        }
+    }
+
+    bool AudioService::HandleActiveOutputDeviceChanged(const ObjectPath& path)
+    {
+        if (_activeOutputDevice == path)
+            return false;
+
+        _activeOutputDevice = path;
+        Utils::DBusUtils::EmitPropertyChanged(*_conn, _iface, "ActiveOutputDevice", _activeOutputDevice);
+        return true;
+    }
+
+    void AudioService::HandleActiveOutputPortChanged(const uint32_t sinkIndex, const std::string& portName)
+    {
+        for (const auto& val: _streams | std::views::values)
+        {
+            if (val->_paDeviceIndex != sinkIndex ||
+                val->GetDirection() != AUDIO_DIRECTION_OUT)
+                continue;
+            val->_device = GetObjectPathForDevice(sinkIndex, AUDIO_DIRECTION_OUT_BOOL, portName);
         }
     }
 
@@ -650,7 +747,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         pa_operation* op = pa_context_get_sink_info_by_index(
             _context,
             index,
-            [](pa_context* ctx, const pa_sink_info* info, int eol, void* userdata)
+            [](pa_context*, const pa_sink_info* info, int eol, void* userdata)
             {
                 if (eol > 0 || !info)
                     return;
@@ -666,46 +763,104 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
     void AudioService::AddOrUpdateInputDevice(const pa_source_info* info)
     {
         const auto index = info->index;
-        auto path = GetObjectPathForDevice(index, AUDIO_DIRECTION_IN_BOOL);
+        const auto sourceName = info->name ? info->name : "";
 
-        const auto it = _devices.find(path);
+        auto& vec = _inDevicesByPaIndex[index];
+        auto stalePaths = vec;
 
-        AudioDevice* device = nullptr;
-        const bool exists = (it != _devices.end());
+        const auto activePort = info->active_port ? info->active_port : nullptr;
+        const auto activePortName = activePort
+                ? (activePort->name ? std::string(activePort->name) : std::string())
+                : std::string();
 
-        if (exists)
+        _inActivePortByPaIndex[index] = activePortName;
+
+        PortIterator(info->ports ? info->n_ports : 0, [&](const std::optional<uint32_t> port)
         {
-            device = it->second.get();
-        }
-        else
-        {
-            auto newDevice = std::make_unique<AudioDevice>(*this, *_conn, path);
-            device = newDevice.get();
-            _devices[path] = std::move(newDevice);
-        }
+            std::string portName;
+            if (port != std::nullopt)
+            {
+                const pa_source_port_info* paPort = info->ports[port.value()];
+                if (!paPort || !paPort->name)
+                    return;
+                portName = paPort->name;
+            }
 
-        device->_suppressPropertyCallbacks = true;
+            auto path = GetObjectPathForDevice(index, AUDIO_DIRECTION_IN_BOOL, portName);
+            stalePaths.erase(path);
+            vec.insert(path);
 
-        device->_paIndex = index;
-        device->_paChannels = info->channel_map.channels;
-        device->_id = AUDIO_DIRECTION_IN + std::to_string(index);
-        device->_name = info->name ? info->name : "";
-        // TODO: Set type
-        device->_direction = AUDIO_DIRECTION_IN;
-        device->_volume = pa_cvolume_avg(&info->volume) / static_cast<float>(PA_VOLUME_NORM);
-        device->_muted = info->mute;
+            const auto it = _devices.find(path);
 
-        device->_suppressPropertyCallbacks = false;
+            AudioDevice* device = nullptr;
+            const bool exists = (it != _devices.end());
 
-        if (!exists)
-            EmitDeviceAdded(path);
+            if (exists)
+            {
+                device = it->second.get();
+            }
+            else
+            {
+                auto newDevice = std::make_unique<AudioDevice>(*this, *_conn, path);
+                device = newDevice.get();
+                _devices.emplace(path, std::move(newDevice));
+            }
+
+            const char* formFactor = pa_proplist_gets(info->proplist, PA_PROP_DEVICE_FORM_FACTOR);
+
+            device->_suppressPropertyCallbacks = true;
+
+            device->_paIndex = index;
+            device->_paChannels = info->channel_map.channels;
+            device->_paPortName = portName;
+            device->_id = AUDIO_DIRECTION_IN + std::to_string(index) + portName;
+            device->_name = sourceName;
+            device->_type = PaFormFactorToDeviceType(formFactor ? formFactor : "");
+            device->_direction = AUDIO_DIRECTION_IN;
+            device->_volume = pa_cvolume_avg(&info->volume) / static_cast<float>(PA_VOLUME_NORM);
+            device->_muted = info->mute;
+
+            device->_suppressPropertyCallbacks = false;
+
+            if (!exists)
+                EmitDeviceAdded(path);
+
+            if (portName == activePortName && _defaultSourceName == sourceName)
+                HandleActiveInputDeviceChanged(path);
+        });
+
+        for (const auto& path : stalePaths)
+            RemoveInputDevice(path);
     }
 
-    void AudioService::RemoveInputDevice(const uint32_t index)
+    void AudioService::RemoveInputDevice(const ObjectPath& path)
     {
-        const auto path = GetObjectPathForDevice(index, AUDIO_DIRECTION_IN_BOOL);
-        if (_devices.erase(path))
-            EmitDeviceRemoved(path);
+        const auto it = _devices.find(path);
+        if (it == _devices.end())
+            return;
+
+        if (const auto it2 = _inDevicesByPaIndex.find(it->second->_paIndex); it2 != _inDevicesByPaIndex.end())
+        {
+            it2->second.erase(path);
+            if (it2->second.empty())
+            {
+                _inDevicesByPaIndex.erase(it2);
+                _inActivePortByPaIndex.erase(it->second->_paIndex);
+            }
+        }
+
+        _devices.erase(path);
+        EmitDeviceRemoved(path);
+    }
+
+    void AudioService::RemoveInputDevicesByIndex(const uint32_t index)
+    {
+        const auto it = _inDevicesByPaIndex.find(index);
+        if (it == _inDevicesByPaIndex.end())
+            return;
+
+        for (const auto& path : it->second)
+            RemoveInputDevice(path);
     }
 
     void AudioService::HandleInputDeviceChanged(const int event, const uint32_t index)
@@ -718,11 +873,21 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
                 break;
 
             case PA_SUBSCRIPTION_EVENT_REMOVE:
-                RemoveInputDevice(index);
+                RemoveInputDevicesByIndex(index);
                 break;
 
             default: break;
         }
+    }
+
+    bool AudioService::HandleActiveInputDeviceChanged(const ObjectPath& path)
+    {
+        if (_activeInputDevice == path)
+            return false;
+
+        _activeInputDevice = path;
+        Utils::DBusUtils::EmitPropertyChanged(*_conn, _iface, "ActiveInputDevice", _activeInputDevice);
+        return true;
     }
 
     void AudioService::QueryInputDevice(const uint32_t index)
@@ -733,7 +898,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         pa_operation* op = pa_context_get_source_info_by_index(
             _context,
             index,
-            [](pa_context* ctx, const pa_source_info* info, int eol, void* userdata)
+            [](pa_context*, const pa_source_info* info, int eol, void* userdata)
             {
                 if (eol > 0 || !info)
                     return;
@@ -764,7 +929,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         {
             auto newStream = std::make_unique<AudioStream>(*this, *_conn, path);
             stream = newStream.get();
-            _streams[path] = std::move(newStream);
+            _streams.emplace(path, std::move(newStream));
         }
 
         const char* appName = pa_proplist_gets(info->proplist, PA_PROP_APPLICATION_NAME);
@@ -773,12 +938,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 
         stream->_paIndex = index;
         stream->_paChannels = info->channel_map.channels;
+        stream->_paDeviceIndex = info->sink;
         stream->_id = std::to_string(index);
         stream->_name = info->name ? info->name : "";
         stream->_applicationName = appName ? appName : "";
-        // TODO: Set type
         stream->_direction = AUDIO_DIRECTION_OUT;
-        stream->_device = GetObjectPathForDevice(info->sink, AUDIO_DIRECTION_OUT_BOOL);
+
+        // Update explicitly when the port changes, update will happen automatically when the actual PA device changes.
+        if (const auto it2 = _outActivePortByPaIndex.find(info->sink); it2 != _outActivePortByPaIndex.end())
+            stream->_device = GetObjectPathForDevice(info->sink, AUDIO_DIRECTION_OUT_BOOL, it2->second);
+
         stream->_volume = pa_cvolume_avg(&info->volume) / static_cast<float>(PA_VOLUME_NORM);
         stream->_muted = info->mute;
 
@@ -820,7 +989,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         pa_operation* op = pa_context_get_sink_input_info(
             _context,
             index,
-            [](pa_context* ctx, const pa_sink_input_info* info, int eol, void* userdata)
+            [](pa_context*, const pa_sink_input_info* info, int eol, void* userdata)
             {
                 if (eol > 0 || !info)
                     return;
@@ -850,16 +1019,188 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
             pa_operation_unref(op);
     }
 
-    ObjectPath AudioService::GetObjectPathForDevice(const uint32_t deviceId, const bool direction)
+    void AudioService::ActivateInputPortAndMakeDefault(const uint32_t sourceIndex, std::string sourceName, const std::string& portName)
+    {
+        if (!_context)
+            return;
+
+        struct Request
+        {
+            AudioService* self;
+            std::string sourceName;
+        };
+
+        auto* request = new Request{
+            .self = this,
+            .sourceName = std::move(sourceName)
+        };
+
+        pa_operation* op = pa_context_set_source_port_by_index(
+            _context,
+            sourceIndex,
+            portName.c_str(),
+            [](pa_context*, const int success, void* userdata)
+            {
+                const std::unique_ptr<Request> req(static_cast<Request*>(userdata));
+
+                if (!success)
+                    return;
+
+                req->self->SetDefaultSource(req->sourceName);
+            },
+            request
+        );
+
+        if (op)
+            pa_operation_unref(op);
+    }
+
+    void AudioService::SetDefaultSource(const std::string& sourceName) const
+    {
+        if (!_context)
+            return;
+
+        pa_operation* op = pa_context_set_default_source(
+            _context,
+            sourceName.c_str(),
+            nullptr,
+            nullptr
+        );
+
+        if (op)
+            pa_operation_unref(op);
+    }
+
+    void AudioService::SetSourcePort(const uint32_t sourceIndex, const std::string& portName) const
+    {
+        if (!_context)
+            return;
+
+        pa_operation* op = pa_context_set_source_port_by_index(
+            _context,
+            sourceIndex,
+            portName.c_str(),
+            nullptr,
+            nullptr
+        );
+
+        if (op)
+            pa_operation_unref(op);
+    }
+
+    void AudioService::ActivateOutputPortAndMakeDefault(const uint32_t sinkIndex,
+                                                        std::string sinkName,
+                                                        const std::string& portName)
+    {
+        if (!_context)
+            return;
+
+        struct Request
+        {
+            AudioService* self;
+            std::string sinkName;
+        };
+
+        auto* request = new Request{
+            .self = this,
+            .sinkName = std::move(sinkName)
+        };
+
+        pa_operation* op = pa_context_set_sink_port_by_index(
+            _context,
+            sinkIndex,
+            portName.c_str(),
+            [](pa_context*, const int success, void* userdata)
+            {
+                const std::unique_ptr<Request> req(static_cast<Request*>(userdata));
+
+                if (!success)
+                    return;
+
+                req->self->SetDefaultSink(req->sinkName);
+            },
+            request
+        );
+
+        if (op)
+            pa_operation_unref(op);
+    }
+
+    void AudioService::SetDefaultSink(const std::string& sinkName) const
+    {
+        if (!_context)
+            return;
+
+        pa_operation* op = pa_context_set_default_sink(
+            _context,
+            sinkName.c_str(),
+            nullptr,
+            nullptr
+        );
+
+        if (op)
+            pa_operation_unref(op);
+    }
+
+    void AudioService::SetSinkPort(const uint32_t sinkIndex, const std::string& portName) const
+    {
+        if (!_context)
+            return;
+
+        pa_operation* op = pa_context_set_sink_port_by_index(
+            _context,
+            sinkIndex,
+            portName.c_str(),
+            nullptr,
+            nullptr
+        );
+
+        if (op)
+            pa_operation_unref(op);
+    }
+
+    ObjectPath AudioService::GetObjectPathForDevice(const uint32_t deviceId, const bool direction, const std::string& portName)
     {
         return GetBaseObjectPath()
             .Child("Devices")
-            .Child((direction ? "out" : "in") + std::to_string(deviceId));
+            .Child((direction ? "out" : "in") + std::to_string(deviceId) + (!portName.empty() ? ":" + portName : ""));
     }
 
     ObjectPath AudioService::GetObjectPathForStream(const uint32_t deviceId)
     {
         return GetBaseObjectPath().Child("Streams").Child(std::to_string(deviceId));
+    }
+
+    void AudioService::PortIterator(const uint32_t portCount, const std::function<void(std::optional<uint32_t> i)>& iterator)
+    {
+        if (!portCount)
+        {
+            iterator(std::nullopt);
+            return;
+        }
+
+        for (uint32_t i = 0; i < portCount; i++)
+        {
+            iterator(i);
+        }
+    }
+
+    std::string AudioService::PaFormFactorToDeviceType(const std::string& formFactor)
+    {
+        if (formFactor == "internal")   return AUDIO_DEVICE_TYPE_INTERNAL;
+        if (formFactor == "speaker")    return AUDIO_DEVICE_TYPE_SPEAKER;
+        if (formFactor == "handset")    return AUDIO_DEVICE_TYPE_HANDSET;
+        if (formFactor == "tv")         return AUDIO_DEVICE_TYPE_TV;
+        if (formFactor == "webcam")     return AUDIO_DEVICE_TYPE_WEBCAM;
+        if (formFactor == "microphone") return AUDIO_DEVICE_TYPE_MICROPHONE;
+        if (formFactor == "headset")    return AUDIO_DEVICE_TYPE_HEADSET;
+        if (formFactor == "headphone")  return AUDIO_DEVICE_TYPE_HEADPHONE;
+        if (formFactor == "hands-free") return AUDIO_DEVICE_TYPE_HANDSFREE;
+        if (formFactor == "car")        return AUDIO_DEVICE_TYPE_CAR;
+        if (formFactor == "hifi")       return AUDIO_DEVICE_TYPE_HIFI;
+        if (formFactor == "computer")   return AUDIO_DEVICE_TYPE_COMPUTER;
+        if (formFactor == "portable")   return AUDIO_DEVICE_TYPE_PORTABLE;
+        return AUDIO_DEVICE_TYPE_UNKNOWN;
     }
 
 }

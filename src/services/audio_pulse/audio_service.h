@@ -20,6 +20,7 @@
 
 #include <pulse/pulseaudio.h>
 #include <pulse/glib-mainloop.h>
+#include <unordered_set>
 #include <glib.h>
 #include "../service.h"
 #include "../../logger.h"
@@ -30,6 +31,22 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 #define AUDIO_DIRECTION_IN       "input"
 #define AUDIO_DIRECTION_OUT_BOOL true
 #define AUDIO_DIRECTION_IN_BOOL  false
+
+// From: https://freedesktop.org/software/pulseaudio/doxygen/proplist_8h.html#a77c49f81eb8426259c13fc53619b9670
+#define AUDIO_DEVICE_TYPE_INTERNAL   "internal"
+#define AUDIO_DEVICE_TYPE_SPEAKER    "speaker"
+#define AUDIO_DEVICE_TYPE_HANDSET    "handset"
+#define AUDIO_DEVICE_TYPE_TV         "tv"
+#define AUDIO_DEVICE_TYPE_WEBCAM     "webcam"
+#define AUDIO_DEVICE_TYPE_MICROPHONE "microphone"
+#define AUDIO_DEVICE_TYPE_HEADSET    "headset"
+#define AUDIO_DEVICE_TYPE_HEADPHONE  "headphone"
+#define AUDIO_DEVICE_TYPE_HANDSFREE  "handsFree"
+#define AUDIO_DEVICE_TYPE_CAR        "car"
+#define AUDIO_DEVICE_TYPE_HIFI       "hifi"
+#define AUDIO_DEVICE_TYPE_COMPUTER   "computer"
+#define AUDIO_DEVICE_TYPE_PORTABLE   "portable"
+#define AUDIO_DEVICE_TYPE_UNKNOWN    "unknown"
 
     class AudioDevice;
     class AudioStream;
@@ -56,8 +73,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 
         std::unordered_map<ObjectPath, std::unique_ptr<AudioDevice>, ObjectPathHash> _devices;
         std::unordered_map<ObjectPath, std::unique_ptr<AudioStream>, ObjectPathHash> _streams;
-        ObjectPath _activeInputDevice{};
+        std::unordered_map<uint32_t, std::unordered_set<ObjectPath, ObjectPathHash>> _outDevicesByPaIndex;
+        std::unordered_map<uint32_t, std::unordered_set<ObjectPath, ObjectPathHash>> _inDevicesByPaIndex;
+        std::unordered_map<uint32_t, std::string> _outActivePortByPaIndex;
+        std::unordered_map<uint32_t, std::string> _inActivePortByPaIndex;
         ObjectPath _activeOutputDevice{};
+        ObjectPath _activeInputDevice{};
         std::string _defaultSinkName;
         std::string _defaultSourceName;
 
@@ -84,12 +105,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         void HandleServerInfo(const pa_server_info* info);
 
         void AddOrUpdateOutputDevice(const pa_sink_info* info);
-        void RemoveOutputDevice(uint32_t index);
+        void RemoveOutputDevice(const ObjectPath& path);
+        void RemoveOutputDevicesByIndex(uint32_t index);
         void HandleOutputDeviceChanged(int event, uint32_t index);
+        bool HandleActiveOutputDeviceChanged(const ObjectPath& path);
+        void HandleActiveOutputPortChanged(uint32_t sinkIndex, const std::string& portName);
         void QueryOutputDevice(uint32_t index);
+
         void AddOrUpdateInputDevice(const pa_source_info* info);
-        void RemoveInputDevice(uint32_t index);
+        void RemoveInputDevice(const ObjectPath& path);
+        void RemoveInputDevicesByIndex(uint32_t index);
         void HandleInputDeviceChanged(int event, uint32_t index);
+        bool HandleActiveInputDeviceChanged(const ObjectPath& path);
         void QueryInputDevice(uint32_t index);
 
         void AddOrUpdateStream(const pa_sink_input_info* info);
@@ -98,8 +125,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         void QueryStream(uint32_t index);
 
         void MoveStreamToDevice(uint32_t streamIndex, uint32_t sinkIndex) const;
+        void ActivateInputPortAndMakeDefault(uint32_t sourceIndex, std::string sourceName, const std::string& portName);
+        void SetDefaultSource(const std::string& sourceName) const;
+        void SetSourcePort(uint32_t sourceIndex, const std::string& portName) const;
+        void ActivateOutputPortAndMakeDefault(uint32_t sinkIndex, std::string sinkName, const std::string& portName);
+        void SetDefaultSink(const std::string& sinkName) const;
+        void SetSinkPort(uint32_t sinkIndex, const std::string& portName) const;
 
-        ObjectPath GetObjectPathForDevice(uint32_t deviceId, bool direction);
+        ObjectPath GetObjectPathForDevice(uint32_t deviceId, bool direction, const std::string& portName);
         ObjectPath GetObjectPathForStream(uint32_t deviceId);
 
     private:
@@ -108,5 +141,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
             static JappeOSCore::Logger instance{"AudioService"};
             return instance;
         }
+
+        static void PortIterator(uint32_t portCount, const std::function<void(std::optional<uint32_t> i)>& iterator);
+        static std::string PaFormFactorToDeviceType(const std::string& formFactor);
     };
 }
