@@ -229,7 +229,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 
         ActivateInputPortAndMakeDefault(
             it->second->_paIndex,
-            it->second->_name.Get(),
+            it->second->_paDeviceName,
             it->second->_paPortName
         );
 
@@ -265,7 +265,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 
         ActivateOutputPortAndMakeDefault(
             it->second->_paIndex,
-            it->second->_name.Get(),
+            it->second->_paDeviceName,
             it->second->_paPortName
         );
 
@@ -616,12 +616,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         PortIterator(info->ports ? info->n_ports : 0, [&](const std::optional<uint32_t> port)
         {
             std::string portName;
+            const char* portDescription = nullptr;
             if (port != std::nullopt)
             {
                 const pa_sink_port_info* paPort = info->ports[port.value()];
                 if (!paPort || !paPort->name)
                     return;
                 portName = paPort->name;
+                portDescription = paPort->description;
             }
 
             auto path = GetObjectPathForDevice(index, AUDIO_DIRECTION_OUT_BOOL, portName);
@@ -650,9 +652,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 
             device->_paIndex = index;
             device->_paChannels = info->channel_map.channels;
+            device->_paDeviceName = sinkName;
             device->_paPortName = portName;
             device->_id = AUDIO_DIRECTION_OUT + std::to_string(index) + portName;
-            device->_name = sinkName;
+            device->_name = GetDeviceDisplayName(info->description, portDescription);
             device->_type = PaFormFactorToDeviceType(formFactor ? formFactor : "");
             device->_direction = AUDIO_DIRECTION_OUT;
             device->_volume = pa_cvolume_avg(&info->volume) / static_cast<float>(PA_VOLUME_NORM);
@@ -778,12 +781,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         PortIterator(info->ports ? info->n_ports : 0, [&](const std::optional<uint32_t> port)
         {
             std::string portName;
+            const char* portDescription = nullptr;
             if (port != std::nullopt)
             {
                 const pa_source_port_info* paPort = info->ports[port.value()];
                 if (!paPort || !paPort->name)
                     return;
                 portName = paPort->name;
+                portDescription = paPort->description;
             }
 
             auto path = GetObjectPathForDevice(index, AUDIO_DIRECTION_IN_BOOL, portName);
@@ -812,9 +817,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
 
             device->_paIndex = index;
             device->_paChannels = info->channel_map.channels;
+            device->_paDeviceName = sourceName;
             device->_paPortName = portName;
             device->_id = AUDIO_DIRECTION_IN + std::to_string(index) + portName;
-            device->_name = sourceName;
+            device->_name = GetDeviceDisplayName(info->description, portDescription);
             device->_type = PaFormFactorToDeviceType(formFactor ? formFactor : "");
             device->_direction = AUDIO_DIRECTION_IN;
             device->_volume = pa_cvolume_avg(&info->volume) / static_cast<float>(PA_VOLUME_NORM);
@@ -1201,6 +1207,23 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         if (formFactor == "computer")   return AUDIO_DEVICE_TYPE_COMPUTER;
         if (formFactor == "portable")   return AUDIO_DEVICE_TYPE_PORTABLE;
         return AUDIO_DEVICE_TYPE_UNKNOWN;
+    }
+
+    std::string AudioService::GetDeviceDisplayName(const char* paDeviceDescription, const char* paPortDescription)
+    {
+        if (!paDeviceDescription && !paPortDescription)
+            return "Unknown";
+
+        std::string portName = paPortDescription ? paPortDescription : "Unknown";
+        std::string deviceName = paDeviceDescription ? paDeviceDescription : "Unknown";
+
+        if (!paDeviceDescription)
+            return portName;
+
+        if (!paPortDescription)
+            return deviceName;
+
+        return portName + " – " + deviceName;
     }
 
 }

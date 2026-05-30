@@ -64,6 +64,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         bool _suppressPropertyCallbacks = false;
         uint32_t _paIndex = std::numeric_limits<uint32_t>::max();
         uint32_t _paChannels = 0;
+        std::string _paDeviceName{};
         std::string _paPortName{};
     };
 }
