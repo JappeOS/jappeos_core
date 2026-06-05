@@ -21,6 +21,7 @@
 #include <pulse/pulseaudio.h>
 #include <pulse/glib-mainloop.h>
 #include <unordered_set>
+#include <string_view>
 #include <glib.h>
 #include "../service.h"
 #include "../../logger.h"
@@ -145,5 +146,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         static void PortIterator(uint32_t portCount, const std::function<void(std::optional<uint32_t> i)>& iterator);
         static std::string PaFormFactorToDeviceType(const std::string& formFactor);
         static std::string GetDeviceDisplayName(const char* paDeviceDescription, const char* paPortDescription = nullptr);
+        static std::string EncodeForObjectPath(std::string_view value);
     };
 }

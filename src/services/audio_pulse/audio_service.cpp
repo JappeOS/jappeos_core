@@ -700,7 +700,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         if (it == _outDevicesByPaIndex.end())
             return;
 
-        for (const auto& path : it->second)
+        const std::vector<ObjectPath> paths{it->second.begin(), it->second.end()};
+        for (const auto& path : paths)
             RemoveOutputDevice(path);
     }
 
@@ -865,7 +866,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
         if (it == _inDevicesByPaIndex.end())
             return;
 
-        for (const auto& path : it->second)
+        const std::vector<ObjectPath> paths{it->second.begin(), it->second.end()};
+        for (const auto& path : paths)
             RemoveInputDevice(path);
     }
 
@@ -1165,11 +1167,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
             pa_operation_unref(op);
     }
 
-    ObjectPath AudioService::GetObjectPathForDevice(const uint32_t deviceId, const bool direction, const std::string& portName)
+    ObjectPath AudioService::GetObjectPathForDevice(const uint32_t deviceId,
+                                                    const bool direction,
+                                                    const std::string& portName)
     {
         return GetBaseObjectPath()
             .Child("Devices")
-            .Child((direction ? "out" : "in") + std::to_string(deviceId) + (!portName.empty() ? ":" + portName : ""));
+            .Child(
+                std::string(direction ? "out" : "in") +
+                "_" +
+                std::to_string(deviceId) +
+                "_p" +
+                EncodeForObjectPath(portName)
+            );
     }
 
     ObjectPath AudioService::GetObjectPathForStream(const uint32_t deviceId)
@@ -1224,6 +1234,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AudioPulse
             return deviceName;
 
         return portName + " – " + deviceName;
+    }
+
+    std::string AudioService::EncodeForObjectPath(const std::string_view value)
+    {
+        constexpr char hex[] = "0123456789ABCDEF";
+
+        std::string out;
+        out.reserve(value.size() * 2);
+        for (const unsigned char c : value)
+        {
+            out.push_back(hex[c >> 4]);
+            out.push_back(hex[c & 0x0F]);
+        }
+        return out;
     }
 
 }
