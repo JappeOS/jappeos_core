@@ -22,13 +22,61 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore
 {
+    namespace
+    {
+        bool IsAsciiAlpha(const char c) noexcept
+        {
+            return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        }
+
+        bool IsAsciiDigit(const char c) noexcept
+        {
+            return c >= '0' && c <= '9';
+        }
+
+        bool IsAsciiAlnum(const char c) noexcept
+        {
+            return IsAsciiAlpha(c) || IsAsciiDigit(c);
+        }
+
+        std::string EscapeForLog(const std::string_view value)
+        {
+            constexpr char hex[] = "0123456789ABCDEF";
+
+            std::string out;
+            out.reserve(value.size());
+            for (const unsigned char c : value)
+            {
+                if (c >= 0x20 && c <= 0x7E && c != '\\')
+                {
+                    out.push_back(static_cast<char>(c));
+                    continue;
+                }
+
+                out += "\\x";
+                out.push_back(hex[c >> 4]);
+                out.push_back(hex[c & 0x0F]);
+            }
+            return out;
+        }
+    }
 
     // ObjectPath
+
+    ObjectPath::ObjectPath(const char* path) :
+        ObjectPath(path ? std::string_view(path) : throw std::invalid_argument("Invalid D-Bus ObjectPath: null"))
+    {
+    }
+
+    ObjectPath::ObjectPath(const std::string_view path) :
+        ObjectPath(std::string(path))
+    {
+    }
 
     ObjectPath::ObjectPath(std::string path)
     {
         if (!IsValid(path))
-            throw std::invalid_argument("Invalid D-Bus ObjectPath");
+            throw std::invalid_argument("Invalid D-Bus ObjectPath: " + EscapeForLog(path));
 
         _path = std::move(path);
     }
@@ -70,7 +118,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         if (s.empty()) return false;
         for (const char c : s)
         {
-            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+            if (!(IsAsciiAlnum(c) || c == '_'))
             {
                 return false;
             }
@@ -78,9 +126,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         return true;
     }
 
-    bool ObjectPath::IsValid(const std::string& path) noexcept
+    bool ObjectPath::IsValid(const std::string_view path) noexcept
     {
-        if (path.empty() || path[0] != '/') return false;
+        if (path.empty() || path.front() != '/') return false;
         if (path.size() > 1 && path.back() == '/') return false;
         if (path == "/") return true;
 
@@ -126,12 +174,12 @@ namespace JappeStudios::JappeOS::JappeOSCore
     bool InterfaceName::IsValidSegment(const std::string_view s) noexcept
     {
         if (s.empty()) return false;
-        if (!(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_'))
+        if (!(IsAsciiAlpha(s[0]) || s[0] == '_'))
             return false;
 
         for (const char c : s.substr(1))
         {
-            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+            if (!(IsAsciiAlnum(c) || c == '_'))
                 return false;
         }
         return true;

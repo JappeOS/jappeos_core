@@ -25,6 +25,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -118,7 +119,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
          *
          * @throws std::invalid_argument if the path is not a valid D-Bus object path.
          */
+        explicit ObjectPath(const char* path);
         explicit ObjectPath(std::string path);
+        explicit ObjectPath(std::string_view path);
 
         /**
          * @brief Implicit conversion to string view.
@@ -178,12 +181,16 @@ namespace JappeStudios::JappeOS::JappeOSCore
          */
         [[nodiscard]] ObjectPath Parent() const;
 
+        /**
+         * @brief Returns whether a string is a syntactically valid D-Bus object path.
+         */
+        [[nodiscard]] static bool IsValid(std::string_view path) noexcept;
+
     private:
         std::string _path;
 
     private:
         static bool IsValidElement(std::string_view s) noexcept;
-        static bool IsValid(const std::string& path) noexcept;
         friend struct ObjectPathHash;
     };
 
@@ -263,6 +270,17 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     template<typename T>
     struct DBusSignatureTraits<std::vector<T>>
+    {
+        static const char* get()
+        {
+            static const std::string sig =
+                std::string("a") + DBusSignatureTraits<T>::get();
+            return sig.c_str();
+        }
+    };
+
+    template<typename T>
+    struct DBusSignatureTraits<std::set<T>>
     {
         static const char* get()
         {
@@ -550,6 +568,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
         static constexpr int type = DBUS_TYPE_OBJECT_PATH;
         static void append(DBusMessageIter& it, const ObjectPath& v)
         {
+            if (!ObjectPath::IsValid(v.ToString()))
+                throw DBusException(DBUS_ERROR_INVALID_ARGS, "Invalid D-Bus object path");
+
             const char* s = v.ToString().c_str();
             AppendValue(it, type, &s);
         }
@@ -561,6 +582,25 @@ namespace JappeStudios::JappeOS::JappeOSCore
         static constexpr int type = DBUS_TYPE_ARRAY;
 
         static void append(DBusMessageIter& it, const std::vector<T>& vec)
+        {
+            DBusMessageIter sub;
+            const char* sig = DBusGetSignature<T>();
+
+            dbus_message_iter_open_container(&it, type, sig, &sub);
+
+            for (const auto& v : vec)
+                DBusSetTraits<T>::append(sub, v);
+
+            dbus_message_iter_close_container(&it, &sub);
+        }
+    };
+
+    template<typename T>
+    struct DBusSetTraits<std::set<T>>
+    {
+        static constexpr int type = DBUS_TYPE_ARRAY;
+
+        static void append(DBusMessageIter& it, const std::set<T>& vec)
         {
             DBusMessageIter sub;
             const char* sig = DBusGetSignature<T>();
@@ -831,7 +871,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
             const char* o;
             dbus_message_iter_get_basic(&it, &o);
             dbus_message_iter_next(&it);
-            return o ? ObjectPath(o) : ObjectPath(); // TODO: Maybe throw instead of using default ObjectPath ctor
+            if (!o)
+                throw DBusException(DBUS_ERROR_INVALID_ARGS, "Null D-Bus object path");
+            if (!ObjectPath::IsValid(o))
+                throw DBusException(DBUS_ERROR_INVALID_ARGS, "Invalid D-Bus object path");
+            return ObjectPath(o);
         }
     };
 
@@ -844,6 +888,27 @@ namespace JappeStudios::JappeOS::JappeOSCore
         {
             DBusMessageIter sub;
             std::vector<T> out;
+
+            dbus_message_iter_recurse(&it, &sub);
+            while (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID)
+            {
+                out.push_back(DBusGetTraits<T>::get(sub));
+            }
+
+            dbus_message_iter_next(&it);
+            return out;
+        }
+    };
+
+    template<typename T>
+    struct DBusGetTraits<std::set<T>>
+    {
+        static constexpr int type = DBUS_TYPE_ARRAY;
+
+        static std::set<T> get(DBusMessageIter& it)
+        {
+            DBusMessageIter sub;
+            std::set<T> out;
 
             dbus_message_iter_recurse(&it, &sub);
             while (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID)
