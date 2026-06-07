@@ -23,6 +23,10 @@
 #include <pwd.h>
 #include <random>
 
+#include "installer_def.h"
+#include "install_storage_data_builder.h"
+#include "steps/validate_install_step.h"
+
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 {
 
@@ -31,8 +35,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                                        Service(serviceManager, conn),
                                        _object(*_conn, GetBaseObjectPath()),
                                        _iface(_object.CreateInterface(GetBaseInterface())),
-                                       _inProgress(*_conn, _iface, "InProgress", false),
-                                       _installDone(*_conn, _iface, "InstallDone", false),
+                                       _state(*_conn, _iface, "State", INSTALLER_STATE_IDLE),
+                                       _progress(*_conn, _iface, "Progress", {}),
                                        _currentLocale(*_conn, _iface, "CurrentLocale", "", true, [this](const std::string& val) { OnSetCurrentLocale(val); }),
                                        _currentTimezone(*_conn, _iface, "CurrentTimezone", "", true, [this](const std::string& val) { OnSetCurrentTimezone(val); }),
                                        _currentKeyboardLayout(*_conn, _iface, "CurrentKeyboardLayout", {}, true, [this](const auto& val) { OnSetCurrentKeyboardLayout(val); })
@@ -46,12 +50,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         CreateTimezones();
         CreateKeyboardLayouts();
         CreateStorageInfo();
+
+        std::vector<std::unique_ptr<InstallStep>> steps;
+        steps.emplace_back(std::make_unique<Steps::ValidateInstallStep>());
+
+        _installController = std::make_unique<InstallController>(
+            InstallControllerCallbacks{
+                [&](const auto& v) { HandleInstallControllerStateChange(v); },
+                [&](const auto& v) { HandleInstallControllerProgressChange(v); },
+            },
+            std::move(steps)
+        );
     }
 
-    InstallerService::~InstallerService()
-    {
-
-    }
+    InstallerService::~InstallerService() = default;
 
     void InstallerService::OnGetLocaleInfo(const Message& message)
     {
@@ -96,7 +108,29 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 
     void InstallerService::OnSetCurrentKeyboardLayout(const std::tuple<std::string, std::string>& keyboardLayout)
     {
+        if (_suppressPropertyCallbacks)
+            return;
 
+        bool fail = false;
+        if (const auto& it = _keyboardLayouts.find(std::get<0>(keyboardLayout));
+            it != _keyboardLayouts.end())
+        {
+            if (!it->second.variants.contains(std::get<1>(keyboardLayout)))
+                fail = true;
+        }
+        else
+        {
+            fail = true;
+        }
+
+        if (fail)
+        {
+            _suppressPropertyCallbacks = true;
+            const auto first = _keyboardLayouts.begin();
+            _currentKeyboardLayout = std::make_tuple(first->first, first->second.variants.begin()->first);
+            _suppressPropertyCallbacks = false;
+            throw DBusException(DBUS_ERROR_INVALID_ARGS, "Invalid keyboard layout");
+        }
     }
 
     void InstallerService::OnGetStorageInfo(const Message& message)
@@ -293,7 +327,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         if (_installPlanId)
             throw DBusException(DBUS_ERROR_FAILED, "Installation plan already exists");
 
-        if (_inProgress.Get())
+        if (_installController->State() == InstallState::Running)
             throw DBusException(DBUS_ERROR_FAILED, "Installation already in progress");
 
         std::vector<std::string> warnings;
@@ -317,6 +351,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             throw DBusException(DBUS_ERROR_FAILED, "Unknown install plan provided");
 
         BeginInstallation();
+        _installPlanId = 0;
         Message::CreateMethodReturn(message).Send(*_conn);
     }
 
@@ -344,21 +379,48 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 
     void InstallerService::CreateKeyboardLayouts()
     {
+        _keyboardLayouts.emplace(
+            "U",
+            KeyboardLayoutData{"U", "Unknown", {{"U", "Unknown variant"}}}
+        );
+        _suppressPropertyCallbacks = true;
+        _currentKeyboardLayout = std::make_tuple("U", "Unknown");
+        _suppressPropertyCallbacks = false;
 
+        // TODO: There must always be at least one variant
+        if (_keyboardLayouts.empty())
+            throw std::runtime_error("No keyboard layouts found");
     }
 
     void InstallerService::CreateStorageInfo()
     {
-
+        InstallStorageDataBuilder::PopulateStorageDevices(_storageDevices);
     }
 
-    void InstallerService::BeginInstallation()
+    void InstallerService::BeginInstallation() const
     {
-        if (_inProgress.Get())
+        if (_installController->State() == InstallState::Running)
             throw DBusException(DBUS_ERROR_FAILED, "Installation already in progress");
 
-        _installDone = false;
-        _inProgress = true;
+        _installController->StartInstall(*_installData);
+    }
+
+    void InstallerService::HandleInstallControllerStateChange(const InstallState state)
+    {
+        _suppressPropertyCallbacks = true;
+        _state = InstallerStateToString(state);
+        _suppressPropertyCallbacks = false;
+    }
+
+    void InstallerService::HandleInstallControllerProgressChange(const InstallProgress& progress)
+    {
+        _suppressPropertyCallbacks = true;
+        _progress = std::make_tuple(
+            progress.step,
+            static_cast<float>(progress.percent) / 100.0f,
+            progress.message
+        );
+        _suppressPropertyCallbacks = false;
     }
 
     void InstallerService::ValidateInstallData(const InstallData& data, std::vector<std::string>& outWarnings)
@@ -399,8 +461,27 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         if (storageDevice == _storageDevices.end())
             throw DBusException(DBUS_ERROR_FAILED, "Unknown storage device");
 
-        if (data.disk.mode == InstallDiskMode::Erase && (!data.disk.mounts.empty() || !data.disk.operations.empty()))
-            throw DBusException(DBUS_ERROR_FAILED, "Erase mode cannot specify 'mounts' or 'operations'");
+        if (data.disk.mode == InstallDiskMode::Erase)
+        {
+            if (!data.disk.mounts.empty() || !data.disk.operations.empty())
+                throw DBusException(DBUS_ERROR_FAILED, "Erase mode cannot specify 'mounts' or 'operations'");
+
+            constexpr auto minDiskSize = STORAGE_PART_BOOT_MIN_SIZE_MIB + STORAGE_PART_ROOT_MIN_SIZE_MIB;
+            constexpr auto minRecommendedDiskSize = STORAGE_PART_BOOT_MIN_RECOMMENDED_SIZE_MIB + STORAGE_PART_ROOT_MIN_RECOMMENDED_SIZE_MIB;
+
+            if (storageDevice->second.sizeMiB < minDiskSize)
+                throw DBusException(
+                    DBUS_ERROR_FAILED,
+                    "Storage device must be at least " +
+                    std::to_string(minDiskSize) + " MiB of size"
+                );
+
+            if (storageDevice->second.sizeMiB < minRecommendedDiskSize)
+                outWarnings.push_back(
+                    "Storage device is recommended to be at least " +
+                    std::to_string(minRecommendedDiskSize) + " MiB of size"
+                );
+        }
 
         if (data.disk.mode == InstallDiskMode::Manual)
             ValidateInstallStorageDataManual(data, storageDevice->second, outWarnings);
@@ -681,11 +762,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             if (it->filesystem != STORAGE_FILESYSTEM_FAT32)
                 throw DBusException(DBUS_ERROR_FAILED, "Boot must be a FAT32 partition");
 
-            if (it->sizeMiB < 100)
-                throw DBusException(DBUS_ERROR_FAILED, "Boot partition must be at least 100 MiB of size");
+            if (it->sizeMiB < STORAGE_PART_BOOT_MIN_SIZE_MIB)
+                throw DBusException(
+                    DBUS_ERROR_FAILED,
+                    "Boot partition must be at least " +
+                    std::to_string(STORAGE_PART_BOOT_MIN_SIZE_MIB) + " MiB of size"
+                );
 
             if (it->sizeMiB < 512)
-                outWarnings.push_back("Boot partition should be at least 512 MiB of size");
+                outWarnings.push_back(
+                    "Boot partition is recommended to be at least " +
+                    std::to_string(STORAGE_PART_BOOT_MIN_RECOMMENDED_SIZE_MIB) + " MiB of size"
+                );
         }
         else
         {
@@ -698,11 +786,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             if (it->filesystem == STORAGE_FILESYSTEM_FAT32)
                 throw DBusException(DBUS_ERROR_FAILED, "Root must not be a FAT32 partition");
 
-            if (it->sizeMiB < 40960)
-                throw DBusException(DBUS_ERROR_FAILED, "Root partition must be at least 40 GiB of size");
+            if (it->sizeMiB < STORAGE_PART_ROOT_MIN_SIZE_MIB)
+                throw DBusException(
+                    DBUS_ERROR_FAILED,
+                    "Root partition must be at least " +
+                    std::to_string(STORAGE_PART_ROOT_MIN_SIZE_MIB) + " MiB of size"
+                );
 
-            if (it->sizeMiB < 40960 * 2)
-                outWarnings.push_back("Root partition should be at least 80 GiB of size");
+            if (it->sizeMiB < STORAGE_PART_ROOT_MIN_RECOMMENDED_SIZE_MIB)
+                outWarnings.push_back(
+                    "Root partition is recommended to be at least " +
+                    std::to_string(STORAGE_PART_ROOT_MIN_RECOMMENDED_SIZE_MIB) + " MiB of size"
+                );
         }
         else
         {
@@ -763,6 +858,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
     bool InstallerService::IsValidStorageMountpoint(const std::string& mountpoint)
     {
         return mountpoint == STORAGE_MOUNTPOINT_BOOT || mountpoint == STORAGE_MOUNTPOINT_ROOT;
+    }
+
+    std::string InstallerService::InstallerStateToString(const InstallState state)
+    {
+        switch (state)
+        {
+            case InstallState::Idle:      return INSTALLER_STATE_IDLE;
+            case InstallState::Running:   return INSTALLER_STATE_RUNNING;
+            case InstallState::Succeeded: return INSTALLER_STATE_SUCCEEDED;
+            case InstallState::Failed:    return INSTALLER_STATE_FAILED;
+            case InstallState::Cancelled: return INSTALLER_STATE_CANCELLED;
+        }
+        return INSTALLER_STATE_IDLE;
     }
 
 }

@@ -20,27 +20,16 @@
 #include <regex>
 #include <set>
 #include <string>
+
+#include "install_controller.h"
+#include "install_data.h"
 #include "../service.h"
 #include "../../logger.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 {
-#define STORAGE_MOUNTPOINT_BOOT "/boot"
-#define STORAGE_MOUNTPOINT_ROOT "/"
-
-#define STORAGE_FILESYSTEM_FAT32   "FAT32"
-#define STORAGE_FILESYSTEM_EXT4    "EXT4"
-#define STORAGE_FILESYSTEM_BTRFS   "BTRFS"
-#define STORAGE_FILESYSTEM_XFS     "XFS"
-#define STORAGE_FILESYSTEM_UNKNOWN "?"
-
     class InstallerService : public Service
     {
-        struct InstallData;
-        struct KeyboardLayoutData;
-        struct StorageDeviceData;
-        struct StoragePartitionData;
-
     public:
         explicit InstallerService(ServiceManager* serviceManager, Connection* conn);
         ~InstallerService() override;
@@ -50,18 +39,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         Object     _object;
         Interface& _iface;
 
-        std::map<std::string, std::string> _locales{};
-        std::set<std::string> _timezones{};
+        std::map<std::string, std::string>        _locales{};
+        std::set<std::string>                     _timezones{};
         std::map<std::string, KeyboardLayoutData> _keyboardLayouts{};
-        std::map<std::string, StorageDeviceData> _storageDevices{};
-        uint32_t _installPlanId = 0;
-        std::unique_ptr<InstallData> _installData;
+        std::map<std::string, StorageDeviceData>  _storageDevices{};
+        uint32_t                                  _installPlanId = 0;
+        std::unique_ptr<InstallData>              _installData;
+        std::unique_ptr<InstallController>        _installController;
 
-        Prop<bool> _inProgress;
-        Prop<bool> _installDone;
-        Prop<std::string> _currentLocale;
-        Prop<std::string> _currentTimezone;
-        Prop<std::tuple<std::string, std::string>> _currentKeyboardLayout;
+        Prop<std::string>                                  _state;
+        Prop<std::tuple<std::string, double, std::string>> _progress;
+        Prop<std::string>                                  _currentLocale;
+        Prop<std::string>                                  _currentTimezone;
+        Prop<std::tuple<std::string, std::string>>         _currentKeyboardLayout;
 
         bool _suppressPropertyCallbacks = false;
 
@@ -77,7 +67,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         void CreateTimezones();
         void CreateKeyboardLayouts();
         void CreateStorageInfo();
-        void BeginInstallation();
+        void BeginInstallation() const;
+
+        void HandleInstallControllerStateChange(InstallState state);
+        void HandleInstallControllerProgressChange(const InstallProgress& progress);
 
         void ValidateInstallData(const InstallData& data, std::vector<std::string>& outWarnings);
         void ValidateInstallStorageData(const InstallData& data, std::vector<std::string>& outWarnings);
@@ -104,120 +97,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         static bool IsValidStorageFilesystem(const std::string& filesystem, bool allowUnknown = false);
         static bool IsValidStorageMountpoint(const std::string& mountpoint);
 
-        struct KeyboardLayoutData
-        {
-            std::string id;
-            std::string name;
-            std::map<std::string, std::string> variants;
-        };
-
-        struct StoragePartitionData
-        {
-            std::string device;
-            std::string filesystem;
-            uint64_t sizeMiB;
-            std::string mountpoint;
-
-            bool IsFreeSpace() const { return filesystem.empty(); }
-        };
-
-        struct StorageDeviceData
-        {
-            std::string device;
-            uint64_t sizeMiB;
-            std::vector<StoragePartitionData> partitions;
-        };
-
-        enum class InstallDiskMode
-        {
-            Erase,
-            Manual,
-            Custom,
-        };
-
-        enum class InstallDiskOperationType
-        {
-            Create,
-            Resize,
-            Remove,
-            SetMountpoint,
-            SetFilesystem,
-        };
-
-        struct InstallDiskOperationCreateData
-        {
-            std::string region;
-            uint64_t sizeMiB;
-            bool remaining;
-            std::string filesystem;
-            std::string mountpoint;
-        };
-
-        struct InstallDiskOperationResizeData
-        {
-            std::string partition;
-            uint64_t sizeMiB;
-            bool remaining;
-        };
-
-        struct InstallDiskOperationRemoveData
-        {
-            std::string partition;
-        };
-
-        struct InstallDiskOperationSetMountpointData
-        {
-            std::string partition;
-            std::string mountpoint;
-        };
-
-        struct InstallDiskOperationSetFilesystemData
-        {
-            std::string partition;
-            std::string filesystem;
-        };
-
-        struct InstallDiskOperationData
-        {
-            InstallDiskOperationType type;
-            std::variant<
-                InstallDiskOperationCreateData,
-                InstallDiskOperationResizeData,
-                InstallDiskOperationRemoveData,
-                InstallDiskOperationSetMountpointData,
-                InstallDiskOperationSetFilesystemData> data;
-        };
-
-        struct InstallDiskMountData
-        {
-            std::string partition;
-            std::string mountpoint;
-        };
-
-        struct InstallDiskData
-        {
-            std::string device;
-            InstallDiskMode mode;
-            std::vector<InstallDiskMountData> mounts;
-            std::vector<InstallDiskOperationData> operations;
-        };
-
-        struct InstallPackagesData
-        {
-            bool installProprietary;
-            bool installRecommendedDrivers;
-        };
-
-        struct InstallData
-        {
-            std::string hostname;
-            std::string username;
-            std::string password;
-            std::string timezone;
-            std::string locale;
-            std::tuple<std::string, std::string> keyboardLayout;
-            InstallDiskData disk;
-            InstallPackagesData packages;
-        };
+        static std::string InstallerStateToString(InstallState state);
     };
 }

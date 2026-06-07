@@ -12,6 +12,8 @@ pkg_check_modules(LIBNM REQUIRED libnm)
 pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
 pkg_check_modules(PULSE REQUIRED libpulse)
 pkg_check_modules(PULSE_GLIB REQUIRED libpulse-mainloop-glib)
+pkg_check_modules(UDEV REQUIRED libudev)
+pkg_check_modules(PARTED REQUIRED libparted)
 
 set(JAPPEOS_COMMON_SOURCES
         src/main.cpp
@@ -36,6 +38,9 @@ set(JAPPEOS_COMMON_SOURCES
 )
 
 set(JAPPEOS_SYSTEM_SOURCES
+        src/utils/scope_guard.h
+        src/utils/command_runner.cpp
+        src/utils/command_runner.h
         src/services/account_manager/account_manager_service.cpp
         src/services/account_manager/account_manager_service.h
         src/services/power_manager/power_manager_service.cpp
@@ -52,13 +57,24 @@ set(JAPPEOS_SYSTEM_SOURCES
         src/services/network_manager/network_connection.h
         src/services/network_manager/network_device_def.h
         src/services/network_manager/network_connection_def.h
-        src/services/installer/installer_service.cpp
-        src/services/installer/installer_service.h
         src/services/bsod/bsod_service.cpp
         src/services/bsod/bsod_service.h
         src/services/session_manager/session_manager_service.cpp
         src/services/session_manager/session_manager_service.h
-        src/utils/scope_guard.h
+        src/services/locale/locale_service.cpp
+        src/services/locale/locale_service.h
+        src/services/installer/installer_service.cpp
+        src/services/installer/installer_service.h
+        src/services/installer/install_step.h
+        src/services/installer/installer_def.h
+        src/services/installer/install_storage_data_builder.cpp
+        src/services/installer/install_storage_data_builder.h
+        src/services/installer/install_controller.cpp
+        src/services/installer/install_controller.h
+        src/services/installer/install_data.h
+        src/services/installer/install_state.h
+        src/services/installer/steps/validate_install_step.cpp
+        src/services/installer/steps/validate_install_step.h
 )
 
 set(JAPPEOS_SESSION_SOURCES
@@ -89,6 +105,8 @@ function(jappeos_configure_target target_name)
             ${PIPEWIRE_INCLUDE_DIRS}
             ${PULSE_INCLUDE_DIRS}
             ${PULSE_GLIB_INCLUDE_DIRS}
+            ${UDEV_INCLUDE_DIRS}
+            ${PARTED_INCLUDE_DIRS}
     )
 
     target_compile_options(${target_name} PRIVATE
@@ -111,6 +129,8 @@ function(jappeos_configure_target target_name)
             ${PIPEWIRE_CFLAGS_OTHER}
             ${PULSE_CFLAGS_OTHER}
             ${PULSE_GLIB_CFLAGS_OTHER}
+            ${UDEV_CFLAGS_OTHER}
+            ${PARTED_CFLAGS_OTHER}
     )
 
     target_link_options(${target_name} PRIVATE
@@ -125,6 +145,8 @@ function(jappeos_configure_target target_name)
             ${PIPEWIRE_LIBRARIES}
             ${PULSE_LIBRARIES}
             ${PULSE_GLIB_LIBRARIES}
+            ${UDEV_LIBRARIES}
+            ${PARTED_LIBRARIES}
     )
 endfunction()
 
