@@ -2286,7 +2286,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         template<typename... ReturnTypes, typename... Args>
         std::tuple<ReturnTypes...> CallMethod(const std::string& method,
                                               const int timeoutMs,
-                                              const Args&... args)
+                                              const Args&... args) const
         {
             auto msg = Message::CreateMethodCall(_busName, _path, _iface, method);
             msg.SetArgs(args...);
@@ -2299,20 +2299,20 @@ namespace JappeStudios::JappeOS::JappeOSCore
          */
         template<typename... ReturnTypes, typename... Args>
         std::tuple<ReturnTypes...> CallMethod(const std::string& method,
-                                              const Args&... args)
+                                              const Args&... args) const
         {
             return CallMethod<ReturnTypes...>(method, DBUS_DEFAULT_SAFE_TIMEOUT, args...);
         }
 
         /**
-         * @brief Calls a method without waiting for/processing the reply.
+         * @brief Calls a method without returning the reply.
          */
         template<typename... Args>
-        void CallMethodNoReply(const std::string& method, const Args&... args)
+        void CallMethodNoReply(const std::string& method, const Args&... args) const
         {
             auto msg = Message::CreateMethodCall(_busName, _path, _iface, method);
             msg.SetArgs(args...);
-            msg.Send(_conn);
+            msg.SendWithReplyIgnore(_conn);
         }
 
         /**
@@ -2323,7 +2323,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @throws DBusException on error or type mismatch
          */
         template<typename T>
-        T GetProperty(const std::string& propertyName)
+        T GetProperty(const std::string& propertyName) const
         {
             using U = std::decay_t<T>;
 
@@ -2359,7 +2359,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
          * @throws DBusException on error
          */
         template<typename T>
-        void SetProperty(const std::string& propertyName, const T& value)
+        void SetProperty(const std::string& propertyName, const T& value) const
         {
             auto msg = Message::CreateMethodCall(
                 _busName,
