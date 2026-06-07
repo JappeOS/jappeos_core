@@ -24,6 +24,7 @@
 #include <sstream>
 #include <vector>
 
+#include "services/locale/locale_service.h"
 #include "services/watchdog/watchdog_service.h"
 #if defined(JAPPEOS_DAEMON_SESSION)
 #include "services/audio_pulse/audio_service.h"
@@ -33,6 +34,8 @@
 #include "services/session_manager/session_manager_service.h"
 #include "services/network_manager/network_manager_service.h"
 #include "services/power_manager/power_manager_service.h"
+#include "services/locale/locale_service.h"
+#include "services/installer/installer_service.h"
 #endif
 #include "utils/jos_exception.h"
 
@@ -234,6 +237,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
         _serviceManager->Register<Services::AccountManager::AccountManagerService>();
         _serviceManager->Register<Services::PowerManager::PowerManagerService>();
         _serviceManager->Register<Services::NetworkManager::NetworkManagerService>();
+        _serviceManager->Register<Services::Locale::LocaleService>();
+        _serviceManager->Register<Services::Installer::InstallerService>();
 #endif
     }
 
