@@ -36,13 +36,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                                        _object(*_conn, GetBaseObjectPath()),
                                        _iface(_object.CreateInterface(GetBaseInterface())),
                                        _state(*_conn, _iface, "State", INSTALLER_STATE_IDLE),
+                                       _errorMessage(*_conn, _iface, "ErrorMessage", ""),
                                        _progress(*_conn, _iface, "Progress", {}),
                                        _currentLocale(*_conn, _iface, "CurrentLocale", "", true, [this](const std::string& val) { OnSetCurrentLocale(val); }),
                                        _currentTimezone(*_conn, _iface, "CurrentTimezone", "", true, [this](const std::string& val) { OnSetCurrentTimezone(val); }),
                                        _currentKeyboardLayout(*_conn, _iface, "CurrentKeyboardLayout", {}, true, [this](const auto& val) { OnSetCurrentKeyboardLayout(val); })
     {
-        _iface.RegisterMethod("GetLocaleInfo", [&] (const auto& m) { OnGetLocaleInfo(m); });
-        _iface.RegisterMethod("GetStorageInfo", [&] (const auto& m) { OnGetStorageInfo(m); });
+        _iface.RegisterMethod("GetLocaleInfo",     [&] (const auto& m) { OnGetLocaleInfo(m); });
+        _iface.RegisterMethod("GetStorageInfo",    [&] (const auto& m) { OnGetStorageInfo(m); });
         _iface.RegisterMethod("CreateInstallPlan", [&] (const auto& m) { OnCreateInstallPlan(m); });
         _iface.RegisterMethod("BeginInstallation", [&] (const auto& m) { OnBeginInstallation(m); });
 
@@ -56,7 +57,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 
         _installController = std::make_unique<InstallController>(
             InstallControllerCallbacks{
-                [&](const auto& v) { HandleInstallControllerStateChange(v); },
+                [&](const auto& s, const auto& e) { HandleInstallControllerStateChange(s, e); },
                 [&](const auto& v) { HandleInstallControllerProgressChange(v); },
             },
             std::move(steps)
@@ -405,10 +406,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         _installController->StartInstall(*_installData);
     }
 
-    void InstallerService::HandleInstallControllerStateChange(const InstallState state)
+    void InstallerService::HandleInstallControllerStateChange(const InstallState state, std::string errorMessage)
     {
         _suppressPropertyCallbacks = true;
         _state = InstallerStateToString(state);
+        _errorMessage = std::move(errorMessage);
         _suppressPropertyCallbacks = false;
     }
 

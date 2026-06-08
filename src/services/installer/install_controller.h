@@ -29,7 +29,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 {
     struct InstallControllerCallbacks
     {
-        std::function<void(InstallState)> stateChanged;
+        std::function<void(InstallState, std::string)> stateChanged;
         std::function<void(const InstallProgress&)> progressChanged;
     };
 
@@ -52,7 +52,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         std::atomic_bool _cancelRequested;
 
         void RunInstall(const InstallData& data);
-        void UpdateState(InstallState state);
+        void UpdateState(InstallState state, std::string errorMessage = "");
         void UpdateProgress(std::string step, uint32_t percent, std::string message) const;
 
     private:

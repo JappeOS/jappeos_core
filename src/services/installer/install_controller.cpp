@@ -101,8 +101,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             }
             catch (const std::exception& e)
             {
-                Log().Crit("Install failed: " + std::string(e.what()));
-                UpdateState(InstallState::Failed);
+                const std::string errorMessage = "Install failed: " + std::string(e.what());
+                Log().Crit(errorMessage);
+                UpdateState(InstallState::Failed, errorMessage);
                 return;
             }
         }
@@ -117,14 +118,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         UpdateState(InstallState::Succeeded);
     }
 
-    void InstallController::UpdateState(const InstallState state)
+    void InstallController::UpdateState(const InstallState state, std::string errorMessage)
     {
+        std::string err = std::move(errorMessage);
+        if (state != InstallState::Failed && !err.empty())
+            err = "";
+
         _state.store(state);
 
         struct UserData
         {
             const InstallController& installController;
             InstallState installState;
+            std::string errorMessage;
         };
 
         g_main_context_invoke(
@@ -132,13 +138,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             [](const gpointer data)
             {
                 const auto* userdata = static_cast<UserData*>(data);
-                userdata->installController._callbacks.stateChanged(userdata->installState);
+                userdata->installController._callbacks.stateChanged(
+                    userdata->installState,
+                    std::move(userdata->errorMessage)
+                );
                 delete userdata;
                 return G_SOURCE_REMOVE;
             },
             new UserData{
                 *this,
                 state,
+                std::move(err)
             }
         );
     }

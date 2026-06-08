@@ -48,6 +48,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         std::unique_ptr<InstallController>        _installController;
 
         Prop<std::string>                                  _state;
+        Prop<std::string>                                  _errorMessage;
         Prop<std::tuple<std::string, double, std::string>> _progress;
         Prop<std::string>                                  _currentLocale;
         Prop<std::string>                                  _currentTimezone;
@@ -69,7 +70,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         void CreateStorageInfo();
         void BeginInstallation() const;
 
-        void HandleInstallControllerStateChange(InstallState state);
+        void HandleInstallControllerStateChange(InstallState state, std::string errorMessage);
         void HandleInstallControllerProgressChange(const InstallProgress& progress);
 
         void ValidateInstallData(const InstallData& data, std::vector<std::string>& outWarnings);
