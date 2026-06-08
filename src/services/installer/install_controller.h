@@ -49,7 +49,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         const InstallControllerCallbacks _callbacks;
         const std::vector<std::unique_ptr<InstallStep>> _steps;
         std::atomic<InstallState> _state{InstallState::Idle};
-        std::atomic_bool _cancelRequested;
+        std::atomic_bool _cancelRequested{false};
 
         void RunInstall(const InstallData& data);
         void UpdateState(InstallState state, std::string errorMessage = "");

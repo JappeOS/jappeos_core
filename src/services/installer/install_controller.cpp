@@ -19,7 +19,7 @@
 #include "install_controller.h"
 
 #include <utility>
-#include <glib/gmain.h>
+#include <glib.h>
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 {
@@ -56,8 +56,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 RunInstall(data);
             }
         );
-
-        _worker.detach();
     }
 
     void InstallController::CancelInstall()
@@ -128,7 +126,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 
         struct UserData
         {
-            const InstallController& installController;
+            InstallControllerCallbacks callbacks;
             InstallState installState;
             std::string errorMessage;
         };
@@ -138,7 +136,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             [](const gpointer data)
             {
                 const auto* userdata = static_cast<UserData*>(data);
-                userdata->installController._callbacks.stateChanged(
+                userdata->callbacks.stateChanged(
                     userdata->installState,
                     std::move(userdata->errorMessage)
                 );
@@ -146,7 +144,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 return G_SOURCE_REMOVE;
             },
             new UserData{
-                *this,
+                _callbacks,
                 state,
                 std::move(err)
             }
@@ -157,7 +155,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
     {
         struct UserData
         {
-            const InstallController& installController;
+            InstallControllerCallbacks callbacks;
             InstallProgress installProgress;
         };
 
@@ -166,12 +164,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             [](const gpointer data)
             {
                 const auto* userdata = static_cast<UserData*>(data);
-                userdata->installController._callbacks.progressChanged(userdata->installProgress);
+                userdata->callbacks.progressChanged(userdata->installProgress);
                 delete userdata;
                 return G_SOURCE_REMOVE;
             },
             new UserData{
-                *this,
+                _callbacks,
                 InstallProgress{
                     std::move(step),
                     percent,

@@ -18,6 +18,8 @@
 
 #include "install_storage_data_builder.h"
 
+#include <cctype>
+#include <cstdlib>
 #include <fstream>
 
 #include "installer_def.h"
@@ -139,7 +141,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             if (out.sizeMiB > 0)
             {
                 StoragePartitionData wholeDisk;
-                wholeDisk.device     = "";
+                wholeDisk.device     = FreeSpaceRegionId(devPath, 1);
                 wholeDisk.filesystem = "";
                 wholeDisk.sizeMiB    = out.sizeMiB;
                 wholeDisk.mountpoint = "";
@@ -149,6 +151,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             return true;
         }
 
+        size_t freeSpaceIndex = 0;
         for (PedPartition* part = ped_disk_next_partition(pedDisk, nullptr);
              part != nullptr;
              part = ped_disk_next_partition(pedDisk, part))
@@ -162,7 +165,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             if (part->type & PED_PARTITION_FREESPACE)
             {
                 // Free space
-                pd.device     = "";
+                pd.device     = FreeSpaceRegionId(devPath, ++freeSpaceIndex);
                 pd.filesystem = "";
             }
             else
@@ -219,7 +222,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
     std::string InstallStorageDataBuilder::MapFilesystem(const PedFileSystemType* fsType)
     {
         if (!fsType || !fsType->name)
-            return "";   // free space / unknown ---> IsFreeSpace() == true
+            return STORAGE_FILESYSTEM_UNKNOWN;
 
         const std::string name = fsType->name;
 
@@ -243,6 +246,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
     {
         const char* v = udev_device_get_property_value(dev, prop);
         return v ? v : "";
+    }
+
+    std::string InstallStorageDataBuilder::FreeSpaceRegionId(const std::string& devPath, const size_t index)
+    {
+        return devPath + "#free-" + std::to_string(index);
     }
 
     uint64_t InstallStorageDataBuilder::BytesToMiB(const long long bytes)

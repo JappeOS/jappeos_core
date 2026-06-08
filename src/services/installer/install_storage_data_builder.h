@@ -21,6 +21,7 @@
 #include <parted/parted.h>
 #include <sys/stat.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -86,6 +87,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
          * @return Value of the property, or "" on failure
          */
         static std::string UdevProp(udev_device* dev, const char* prop);
+
+        /**
+         * @brief Create a stable operation target for a free-space region.
+         * @param devPath Parent device path
+         * @param index One-based free-space region index on this device
+         * @return Synthetic region id exposed through GetStorageInfo
+         */
+        static std::string FreeSpaceRegionId(const std::string& devPath, size_t index);
 
         /**
          * @brief Convert a byte count (from libparted) to whole MiB, rounding down.

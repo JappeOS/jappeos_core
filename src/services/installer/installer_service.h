@@ -81,9 +81,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         void ValidateInstallStorageDataCustom(const InstallData& data,
                                               const StorageDeviceData& device,
                                               std::vector<std::string>& outWarnings);
-        void ValidateInstallStorageData_VerifyMountpoints(const std::string& bootPartition,
-                                                          const std::string& rootPartition,
-                                                          const std::vector<StoragePartitionData>& partitions,
+        void ValidateInstallStorageData_VerifyMountpoints(const StoragePartitionData& bootPartition,
+                                                          const StoragePartitionData& rootPartition,
                                                           std::vector<std::string>& outWarnings);
 
     private:

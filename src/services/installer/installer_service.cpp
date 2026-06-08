@@ -19,6 +19,7 @@
 #include "installer_service.h"
 
 #include <algorithm>
+#include <limits>
 #include <unordered_set>
 #include <pwd.h>
 #include <random>
@@ -146,7 +147,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             std::vector<std::tuple<std::string, std::string, uint64_t, std::string>> partitions;
             for (const auto& part : val.partitions)
             {
-                partitions.push_back(std::make_tuple(part.device, part.filesystem, part.sizeMiB, /*part.mountpoint*/ ""));
+                partitions.push_back(std::make_tuple(part.device, part.filesystem, part.sizeMiB, part.mountpoint));
             }
 
             storageDevices.emplace(val.device, std::make_tuple(val.sizeMiB, partitions));
@@ -336,7 +337,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 
         static std::random_device rd;
         static std::mt19937 rng(rd());
-        static std::uniform_int_distribution<uint32_t> dist;
+        static std::uniform_int_distribution<uint32_t> dist(1, std::numeric_limits<uint32_t>::max());
         _installPlanId = dist(rng);
         _installData = std::make_unique<InstallData>(std::move(installData));
 
@@ -385,7 +386,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             KeyboardLayoutData{"U", "Unknown", {{"U", "Unknown variant"}}}
         );
         _suppressPropertyCallbacks = true;
-        _currentKeyboardLayout = std::make_tuple("U", "Unknown");
+        _currentKeyboardLayout = std::make_tuple("U", "U");
         _suppressPropertyCallbacks = false;
 
         // TODO: There must always be at least one variant
@@ -457,7 +458,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         if (data.disk.mode != InstallDiskMode::Erase &&
             data.disk.mode != InstallDiskMode::Manual &&
             data.disk.mode != InstallDiskMode::Custom)
-            throw DBusException(DBUS_ERROR_INVALID_ARGS, "Invalid disk operation type");
+            throw DBusException(DBUS_ERROR_INVALID_ARGS, "Invalid disk mode");
 
         const auto& storageDevice = _storageDevices.find(data.disk.device);
         if (storageDevice == _storageDevices.end())
@@ -500,35 +501,47 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         if (!data.disk.operations.empty())
             throw DBusException(DBUS_ERROR_FAILED, "Manual mode cannot specify 'operations'");
 
-        std::string bootPartition;
+        const StoragePartitionData* bootPartition = nullptr;
+        const StoragePartitionData* rootPartition = nullptr;
+        std::set<std::string> mountedPartitions;
+        for (const auto& mount : data.disk.mounts)
+        {
+            if (!IsValidStorageMountpoint(mount.mountpoint))
+                throw DBusException(DBUS_ERROR_FAILED, "Invalid mountpoint: " + mount.mountpoint);
+
+            auto partition = std::ranges::find_if(partitions, [&](const auto& p) { return p.device == mount.partition; });
+            if (partition == partitions.end())
+                throw DBusException(DBUS_ERROR_FAILED, "Unknown partition: " + mount.partition);
+
+            if (partition->IsFreeSpace())
+                throw DBusException(DBUS_ERROR_FAILED, "Cannot mount free space: " + mount.partition);
+
+            if (!mountedPartitions.emplace(mount.partition).second)
+                throw DBusException(DBUS_ERROR_FAILED, "Partition has multiple mountpoints: " + mount.partition);
+
+            if (mount.mountpoint == STORAGE_MOUNTPOINT_BOOT)
+                bootPartition = &*partition;
+            else if (mount.mountpoint == STORAGE_MOUNTPOINT_ROOT)
+                rootPartition = &*partition;
+        }
+
         if (std::ranges::count_if(data.disk.mounts, [&](const auto& m)
         {
-            if (m.mountpoint == STORAGE_MOUNTPOINT_BOOT)
-            {
-                bootPartition = m.partition;
-                return true;
-            }
-            return false;
+            return m.mountpoint == STORAGE_MOUNTPOINT_BOOT;
         }) != 1)
         {
             throw DBusException(DBUS_ERROR_FAILED, "Expected exactly one boot partition");
         }
 
-        std::string rootPartition;
         if (std::ranges::count_if(data.disk.mounts, [&](const auto& m)
         {
-            if (m.mountpoint == STORAGE_MOUNTPOINT_ROOT)
-            {
-                rootPartition = m.partition;
-                return true;
-            }
-            return false;
+            return m.mountpoint == STORAGE_MOUNTPOINT_ROOT;
         }) != 1)
         {
             throw DBusException(DBUS_ERROR_FAILED, "Expected exactly one root partition");
         }
 
-        ValidateInstallStorageData_VerifyMountpoints(bootPartition, rootPartition, partitions, outWarnings);
+        ValidateInstallStorageData_VerifyMountpoints(*bootPartition, *rootPartition, outWarnings);
     }
 
     void InstallerService::ValidateInstallStorageDataCustom(const InstallData& data,
@@ -564,6 +577,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 case InstallDiskOperationType::Create:
                 {
                     const auto& createOP = std::get<InstallDiskOperationCreateData>(operation.data);
+                    if (createOP.region.empty())
+                        throw DBusException(DBUS_ERROR_FAILED, "Missing region for create operation");
+
                     auto it = std::ranges::find_if(partitions, [&](const auto& m) { return m.device == createOP.region; });
                     if (it == partitions.end())
                         throw DBusException(DBUS_ERROR_FAILED, "Unknown partition or region: " + createOP.region);
@@ -593,7 +609,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                     else
                         part.sizeMiB -= createSizeMiB;
 
-                    const auto newPartition = StoragePartitionData{"", createOP.filesystem, createSizeMiB};
+                    const auto newPartition = StoragePartitionData{
+                        "",
+                        createOP.filesystem,
+                        createSizeMiB,
+                        createOP.mountpoint
+                    };
                     partitions.insert(it, newPartition);
 
                     removeAdjacentSpaces();
@@ -602,6 +623,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 case InstallDiskOperationType::Resize:
                 {
                     const auto& resizeOP = std::get<InstallDiskOperationResizeData>(operation.data);
+                    if (resizeOP.partition.empty())
+                        throw DBusException(DBUS_ERROR_FAILED, "Missing partition for resize operation");
+
                     auto it = std::ranges::find_if(partitions, [&](const auto& m) { return m.device == resizeOP.partition; });
                     if (it == partitions.end())
                         throw DBusException(DBUS_ERROR_FAILED, "Unknown partition: " + resizeOP.partition);
@@ -646,7 +670,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                         if (nextPart != partitions.end())
                             partitions.erase(nextPart);
                     }
-                    else if (nextPart != partitions.end())
+                    else if (addedSpace > 0 && nextPart != partitions.end())
                     {
                         const auto growth = static_cast<uint64_t>(addedSpace);
                         nextPart->sizeMiB -= growth;
@@ -664,6 +688,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 case InstallDiskOperationType::Remove:
                 {
                     const auto& removeOP = std::get<InstallDiskOperationRemoveData>(operation.data);
+                    if (removeOP.partition.empty())
+                        throw DBusException(DBUS_ERROR_FAILED, "Missing partition for remove operation");
+
                     auto part = std::ranges::find_if(partitions, [&](const auto& m) { return m.device == removeOP.partition; });
                     if (part == partitions.end())
                         throw DBusException(DBUS_ERROR_FAILED, "Unknown partition: " + removeOP.partition);
@@ -681,6 +708,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 case InstallDiskOperationType::SetMountpoint:
                 {
                     const auto& setMountOP = std::get<InstallDiskOperationSetMountpointData>(operation.data);
+                    if (setMountOP.partition.empty())
+                        throw DBusException(DBUS_ERROR_FAILED, "Missing partition for set mountpoint operation");
+
                     auto part = std::ranges::find_if(partitions, [&](const auto& m) { return m.device == setMountOP.partition; });
                     if (part == partitions.end())
                         throw DBusException(DBUS_ERROR_FAILED, "Unknown partition: " + setMountOP.partition);
@@ -697,6 +727,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 case InstallDiskOperationType::SetFilesystem:
                 {
                     const auto& setFileSysOP = std::get<InstallDiskOperationSetFilesystemData>(operation.data);
+                    if (setFileSysOP.partition.empty())
+                        throw DBusException(DBUS_ERROR_FAILED, "Missing partition for set filesystem operation");
+
                     auto part = std::ranges::find_if(partitions, [&](const auto& m) { return m.device == setFileSysOP.partition; });
                     if (part == partitions.end())
                         throw DBusException(DBUS_ERROR_FAILED, "Unknown partition: " + setFileSysOP.partition);
@@ -715,19 +748,23 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             }
         }
 
+        uint64_t expectedPartSizes = 0;
+        for (const auto& partition : device.partitions)
+            expectedPartSizes += partition.sizeMiB;
+
         uint64_t partSizes = 0;
         for (const auto& partition : partitions)
             partSizes += partition.sizeMiB;
 
-        if (partSizes != device.sizeMiB)
+        if (partSizes != expectedPartSizes)
             throw DBusException(DBUS_ERROR_FAILED, "BUG: Partition sizes do not add up to the device size");
 
-        std::string bootPartition;
+        const StoragePartitionData* bootPartition = nullptr;
         if (std::ranges::count_if(partitions, [&](const auto& p)
         {
             if (p.mountpoint == STORAGE_MOUNTPOINT_BOOT)
             {
-                bootPartition = p.device;
+                bootPartition = &p;
                 return true;
             }
             return false;
@@ -736,12 +773,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             throw DBusException(DBUS_ERROR_FAILED, "Expected exactly one boot partition");
         }
 
-        std::string rootPartition;
+        const StoragePartitionData* rootPartition = nullptr;
         if (std::ranges::count_if(partitions, [&](const auto& p)
         {
             if (p.mountpoint == STORAGE_MOUNTPOINT_ROOT)
             {
-                rootPartition = p.device;
+                rootPartition = &p;
                 return true;
             }
             return false;
@@ -750,61 +787,47 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             throw DBusException(DBUS_ERROR_FAILED, "Expected exactly one root partition");
         }
 
-        ValidateInstallStorageData_VerifyMountpoints(bootPartition, rootPartition, partitions, outWarnings);
+        ValidateInstallStorageData_VerifyMountpoints(*bootPartition, *rootPartition, outWarnings);
     }
 
-    void InstallerService::ValidateInstallStorageData_VerifyMountpoints(const std::string& bootPartition,
-                                                                        const std::string& rootPartition,
-                                                                        const std::vector<StoragePartitionData>& partitions,
+    void InstallerService::ValidateInstallStorageData_VerifyMountpoints(const StoragePartitionData& bootPartition,
+                                                                        const StoragePartitionData& rootPartition,
                                                                         std::vector<std::string>& outWarnings)
     {
-        if (const auto& it = std::ranges::find_if(partitions, [&](const auto& m) { return m.device == bootPartition; });
-            it != partitions.end())
-        {
-            if (it->filesystem != STORAGE_FILESYSTEM_FAT32)
-                throw DBusException(DBUS_ERROR_FAILED, "Boot must be a FAT32 partition");
+        if (bootPartition.filesystem != STORAGE_FILESYSTEM_FAT32)
+            throw DBusException(DBUS_ERROR_FAILED, "Boot must be a FAT32 partition");
 
-            if (it->sizeMiB < STORAGE_PART_BOOT_MIN_SIZE_MIB)
-                throw DBusException(
-                    DBUS_ERROR_FAILED,
-                    "Boot partition must be at least " +
-                    std::to_string(STORAGE_PART_BOOT_MIN_SIZE_MIB) + " MiB of size"
-                );
+        if (bootPartition.sizeMiB < STORAGE_PART_BOOT_MIN_SIZE_MIB)
+            throw DBusException(
+                DBUS_ERROR_FAILED,
+                "Boot partition must be at least " +
+                std::to_string(STORAGE_PART_BOOT_MIN_SIZE_MIB) + " MiB of size"
+            );
 
-            if (it->sizeMiB < 512)
-                outWarnings.push_back(
-                    "Boot partition is recommended to be at least " +
-                    std::to_string(STORAGE_PART_BOOT_MIN_RECOMMENDED_SIZE_MIB) + " MiB of size"
-                );
-        }
-        else
-        {
-            throw DBusException(DBUS_ERROR_FAILED, "Boot partition does not exist");
-        }
+        if (bootPartition.sizeMiB < STORAGE_PART_BOOT_MIN_RECOMMENDED_SIZE_MIB)
+            outWarnings.push_back(
+                "Boot partition is recommended to be at least " +
+                std::to_string(STORAGE_PART_BOOT_MIN_RECOMMENDED_SIZE_MIB) + " MiB of size"
+            );
 
-        if (const auto& it = std::ranges::find_if(partitions, [&](const auto& m) { return m.device == rootPartition; });
-            it != partitions.end())
-        {
-            if (it->filesystem == STORAGE_FILESYSTEM_FAT32)
-                throw DBusException(DBUS_ERROR_FAILED, "Root must not be a FAT32 partition");
+        if (rootPartition.filesystem == STORAGE_FILESYSTEM_FAT32)
+            throw DBusException(DBUS_ERROR_FAILED, "Root must not be a FAT32 partition");
 
-            if (it->sizeMiB < STORAGE_PART_ROOT_MIN_SIZE_MIB)
-                throw DBusException(
-                    DBUS_ERROR_FAILED,
-                    "Root partition must be at least " +
-                    std::to_string(STORAGE_PART_ROOT_MIN_SIZE_MIB) + " MiB of size"
-                );
+        if (!IsValidStorageFilesystem(rootPartition.filesystem))
+            throw DBusException(DBUS_ERROR_FAILED, "Root must be a supported filesystem");
 
-            if (it->sizeMiB < STORAGE_PART_ROOT_MIN_RECOMMENDED_SIZE_MIB)
-                outWarnings.push_back(
-                    "Root partition is recommended to be at least " +
-                    std::to_string(STORAGE_PART_ROOT_MIN_RECOMMENDED_SIZE_MIB) + " MiB of size"
-                );
-        }
-        else
-        {
-            throw DBusException(DBUS_ERROR_FAILED, "Root partition does not exist");
-        }
+        if (rootPartition.sizeMiB < STORAGE_PART_ROOT_MIN_SIZE_MIB)
+            throw DBusException(
+                DBUS_ERROR_FAILED,
+                "Root partition must be at least " +
+                std::to_string(STORAGE_PART_ROOT_MIN_SIZE_MIB) + " MiB of size"
+            );
+
+        if (rootPartition.sizeMiB < STORAGE_PART_ROOT_MIN_RECOMMENDED_SIZE_MIB)
+            outWarnings.push_back(
+                "Root partition is recommended to be at least " +
+                std::to_string(STORAGE_PART_ROOT_MIN_RECOMMENDED_SIZE_MIB) + " MiB of size"
+            );
     }
 
     bool InstallerService::IsValidHostname(const std::string& hostname)
@@ -845,7 +868,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         if (reserved.contains(username))
             return false;
 
-        return getpwnam(username.c_str()) != nullptr;
+        return getpwnam(username.c_str()) == nullptr;
     }
 
     bool InstallerService::IsValidStorageFilesystem(const std::string& filesystem, const bool allowUnknown)
