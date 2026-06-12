@@ -62,7 +62,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         void OnSetCurrentKeyboardLayout(const std::tuple<std::string, std::string>& keyboardLayout);
         void OnGetStorageInfo(const Message& message);
         void OnCreateInstallPlan(const Message& message);
+        void OnCancelInstallPlan(const Message& message);
         void OnBeginInstallation(const Message& message);
+        void OnVerifyUsername(const Message& message) const;
+        void OnVerifyHostname(const Message& message) const;
 
         void CreateLocales();
         void CreateTimezones();

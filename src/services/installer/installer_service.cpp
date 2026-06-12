@@ -46,7 +46,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         _iface.RegisterMethod("GetLocaleInfo",     [&] (const auto& m) { OnGetLocaleInfo(m); });
         _iface.RegisterMethod("GetStorageInfo",    [&] (const auto& m) { OnGetStorageInfo(m); });
         _iface.RegisterMethod("CreateInstallPlan", [&] (const auto& m) { OnCreateInstallPlan(m); });
+        _iface.RegisterMethod("CancelInstallPlan", [&] (const auto& m) { OnCancelInstallPlan(m); });
         _iface.RegisterMethod("BeginInstallation", [&] (const auto& m) { OnBeginInstallation(m); });
+        _iface.RegisterMethod("VerifyUsername",    [&] (const auto& m) { OnVerifyUsername(m); });
+        _iface.RegisterMethod("VerifyHostname",    [&] (const auto& m) { OnVerifyHostname(m); });
 
         CreateLocales();
         CreateTimezones();
@@ -346,6 +349,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         msg.Send(*_conn);
     }
 
+    void InstallerService::OnCancelInstallPlan(const Message& message)
+    {
+        if (const auto [plan] = message.GetArgs<uint32_t>(); plan != _installPlanId)
+            throw DBusException(DBUS_ERROR_FAILED, "Unknown install plan provided");
+        _installPlanId = 0;
+    }
+
     void InstallerService::OnBeginInstallation(const Message& message)
     {
         const auto [plan] = message.GetArgs<uint32_t>();
@@ -355,6 +365,22 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         BeginInstallation();
         _installPlanId = 0;
         Message::CreateMethodReturn(message).Send(*_conn);
+    }
+
+    void InstallerService::OnVerifyUsername(const Message& message) const
+    {
+        const auto [username] = message.GetArgs<std::string>();
+        auto ret = Message::CreateMethodReturn(message);
+        ret.SetArgs(IsValidUsername(username));
+        ret.Send(*_conn);
+    }
+
+    void InstallerService::OnVerifyHostname(const Message& message) const
+    {
+        const auto [hostname] = message.GetArgs<std::string>();
+        auto ret = Message::CreateMethodReturn(message);
+        ret.SetArgs(IsValidHostname(hostname));
+        ret.Send(*_conn);
     }
 
     void InstallerService::CreateLocales()
