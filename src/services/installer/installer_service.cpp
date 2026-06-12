@@ -870,6 +870,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 
     bool InstallerService::IsValidUsername(const std::string& username)
     {
+        if (username.empty() || username.size() > 32)
+            return false;
+
         static const std::regex pattern(
             R"(^[a-z_][a-z0-9_-]{0,31}$)"
         );
