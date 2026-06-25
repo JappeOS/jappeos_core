@@ -14,6 +14,7 @@ pkg_check_modules(PULSE REQUIRED libpulse)
 pkg_check_modules(PULSE_GLIB REQUIRED libpulse-mainloop-glib)
 pkg_check_modules(UDEV REQUIRED libudev)
 pkg_check_modules(PARTED REQUIRED libparted)
+pkg_check_modules(ICU_74 REQUIRED icu-uc icu-i18n)
 
 set(JAPPEOS_COMMON_SOURCES
         src/main.cpp
@@ -75,6 +76,8 @@ set(JAPPEOS_SYSTEM_SOURCES
         src/services/installer/install_state.h
         src/services/installer/steps/validate_install_step.cpp
         src/services/installer/steps/validate_install_step.h
+        src/services/installer/steps/install_dummy_step.cpp
+        src/services/installer/steps/install_dummy_step.h
 )
 
 set(JAPPEOS_SESSION_SOURCES
@@ -107,6 +110,7 @@ function(jappeos_configure_target target_name)
             ${PULSE_GLIB_INCLUDE_DIRS}
             ${UDEV_INCLUDE_DIRS}
             ${PARTED_INCLUDE_DIRS}
+            ${ICU_74_INCLUDE_DIRS}
     )
 
     target_compile_options(${target_name} PRIVATE
@@ -131,6 +135,7 @@ function(jappeos_configure_target target_name)
             ${PULSE_GLIB_CFLAGS_OTHER}
             ${UDEV_CFLAGS_OTHER}
             ${PARTED_CFLAGS_OTHER}
+            ${ICU_74_CFLAGS_OTHER}
     )
 
     target_link_options(${target_name} PRIVATE
@@ -147,6 +152,12 @@ function(jappeos_configure_target target_name)
             ${PULSE_GLIB_LIBRARIES}
             ${UDEV_LIBRARIES}
             ${PARTED_LIBRARIES}
+            ${ICU_74_LIBRARIES}
+    )
+
+    set_target_properties(${target_name} PROPERTIES
+            INSTALL_RPATH "$ORIGIN"
+            BUILD_WITH_INSTALL_RPATH TRUE
     )
 endfunction()
 

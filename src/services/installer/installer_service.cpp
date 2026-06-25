@@ -24,8 +24,10 @@
 #include <pwd.h>
 #include <random>
 
+#include "../locale/locale_service.h"
 #include "installer_def.h"
 #include "install_storage_data_builder.h"
+#include "steps/install_dummy_step.h"
 #include "steps/validate_install_step.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
@@ -58,6 +60,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 
         std::vector<std::unique_ptr<InstallStep>> steps;
         steps.emplace_back(std::make_unique<Steps::ValidateInstallStep>());
+        steps.emplace_back(std::make_unique<Steps::InstallDummyStep>());
 
         _installController = std::make_unique<InstallController>(
             InstallControllerCallbacks{
@@ -91,7 +94,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         if (!_locales.contains(locale))
         {
             _suppressPropertyCallbacks = true;
-            _currentLocale = _locales.begin()->first;
+            _currentLocale = _serviceManager->Get<Locale::LocaleService>()->GetLocale();
             _suppressPropertyCallbacks = false;
             throw DBusException(DBUS_ERROR_INVALID_ARGS, "Invalid locale");
         }
@@ -105,7 +108,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         if (!_timezones.contains(timezone))
         {
             _suppressPropertyCallbacks = true;
-            _currentTimezone = *_timezones.begin();
+            _currentTimezone = _serviceManager->Get<Locale::LocaleService>()->GetTimezone();
             _suppressPropertyCallbacks = false;
             throw DBusException(DBUS_ERROR_INVALID_ARGS, "Invalid timezone");
         }
@@ -385,24 +388,27 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 
     void InstallerService::CreateLocales()
     {
-        _locales.emplace("U", "Unknown");
-        _suppressPropertyCallbacks = true;
-        _currentLocale = "U";
-        _suppressPropertyCallbacks = false;
-
+        const auto localeService = _serviceManager->Get<Locale::LocaleService>();
+        _locales = localeService->ListLocales();
         if (_locales.empty())
             throw std::runtime_error("No locales found");
+
+        _suppressPropertyCallbacks = true;
+        _currentLocale = localeService->GetLocale();
+        _suppressPropertyCallbacks = false;
     }
 
     void InstallerService::CreateTimezones()
     {
-        _timezones.emplace("Unknown");
-        _suppressPropertyCallbacks = true;
-        _currentTimezone = "Unknown";
-        _suppressPropertyCallbacks = false;
-
+        const auto localeService = _serviceManager->Get<Locale::LocaleService>();
+        const auto timezones = localeService->ListTimezones();
+        _timezones = std::set(timezones.begin(), timezones.end());
         if (_timezones.empty())
             throw std::runtime_error("No timezones found");
+
+        _suppressPropertyCallbacks = true;
+        _currentTimezone = localeService->GetTimezone();
+        _suppressPropertyCallbacks = false;
     }
 
     void InstallerService::CreateKeyboardLayouts()
@@ -433,11 +439,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         _installController->StartInstall(*_installData);
     }
 
-    void InstallerService::HandleInstallControllerStateChange(const InstallState state, std::string errorMessage)
+    void InstallerService::HandleInstallControllerStateChange(const InstallState state, const std::string& errorMessage)
     {
         _suppressPropertyCallbacks = true;
         _state = InstallerStateToString(state);
-        _errorMessage = std::move(errorMessage);
+        _errorMessage = errorMessage;
         _suppressPropertyCallbacks = false;
     }
 
@@ -446,7 +452,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         _suppressPropertyCallbacks = true;
         _progress = std::make_tuple(
             progress.step,
-            static_cast<float>(progress.percent) / 100.0f,
+            static_cast<double>(progress.percent) / 100.0,
             progress.message
         );
         _suppressPropertyCallbacks = false;

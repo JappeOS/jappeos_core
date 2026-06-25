@@ -161,12 +161,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             if (part->type & PED_PARTITION_METADATA) continue;
 
             StoragePartitionData pd;
+            pd.sizeMiB    = BytesToMiB(
+                static_cast<long long>(pedDev->sector_size) * part->geom.length);
 
             if (part->type & PED_PARTITION_FREESPACE)
             {
                 // Free space
                 pd.device     = FreeSpaceRegionId(devPath, ++freeSpaceIndex);
                 pd.filesystem = "";
+                if (pd.sizeMiB == 0)
+                    continue;
             }
             else
             {
@@ -178,8 +182,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 pd.filesystem = MapFilesystem(ped_file_system_probe(&part->geom));
             }
 
-            pd.sizeMiB    = BytesToMiB(
-                static_cast<long long>(pedDev->sector_size) * part->geom.length);
             pd.mountpoint = "";   // filled separately if needed
 
             out.partitions.push_back(std::move(pd));

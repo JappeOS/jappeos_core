@@ -73,7 +73,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         void CreateStorageInfo();
         void BeginInstallation() const;
 
-        void HandleInstallControllerStateChange(InstallState state, std::string errorMessage);
+        void HandleInstallControllerStateChange(InstallState state, const std::string& errorMessage);
         void HandleInstallControllerProgressChange(const InstallProgress& progress);
 
         void ValidateInstallData(const InstallData& data, std::vector<std::string>& outWarnings);

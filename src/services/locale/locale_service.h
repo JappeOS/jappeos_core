@@ -23,32 +23,43 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
 {
-#define JOSLC_PROP_LOCALE "Locale"
+#define JOSLC_PROP_LOCALE   "Locale"
+#define JOSLC_PROP_TIMEZONE "Timezone"
 
     class LocaleService : public Service
     {
     public:
         Event<const std::string&> OnLocaleChanged;
+        Event<const std::string&> OnTimezoneChanged;
 
         explicit LocaleService(ServiceManager* serviceManager, Connection* conn);
         ~LocaleService() override;
         [[nodiscard]] std::string GetName() const override { return "LocaleService"; }
 
         const std::map<std::string, std::string>& ListLocales();
+        std::vector<std::string> ListTimezones() const;
         std::string GetLocale();
+        std::string GetTimezone() const;
         void SetLocale(const std::string& locale) const;
+        void SetTimezone(const std::string& timezone, bool interactive = false) const;
 
     private:
         Object     _object;
         Interface& _iface;
-        Proxy      _proxy;
+        Proxy      _proxyLocale1;
+        Proxy      _proxyTimedate1;
         std::unique_ptr<SignalSubscription> _subLocaleChanged;
+        std::unique_ptr<SignalSubscription> _subTimezoneChanged;
 
         std::map<std::string, std::string> _locales;
         std::string _currentLocale;
 
         void OnGetLocales(const Message& message) const;
+        void OnSetLocale(const Message& message) const;
+        void OnGetTimezones(const Message& message) const;
+        void OnSetTimezone(const Message& message) const;
         void EmitLocaleChanged(const std::string& locale) const;
+        void EmitTimezoneChanged(const std::string& timezone) const;
 
         void DiscoverLocales();
 
@@ -59,7 +70,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
             return instance;
         }
 
-        static std::string GetDisplayName(const std::string& locale);
+        static std::string GetLocaleDisplayName(const std::string& locale);
         static std::string ReadFreedesktopLocale(const std::vector<std::string>& locales);
     };
 }

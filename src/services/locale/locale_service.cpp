@@ -17,8 +17,13 @@
  */
 
 #include "locale_service.h"
+
+#include <filesystem>
+#include <algorithm>
 #include <unicode/locid.h>
 #include "../../utils/dbus_utils.h"
+
+namespace fs = std::filesystem;
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
 {
@@ -28,23 +33,32 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
                                  Service(serviceManager, conn),
                                  _object(*_conn, GetBaseObjectPath()),
                                  _iface(_object.CreateInterface(GetBaseInterface())),
-                                 _proxy(*_conn,
+                                 _proxyLocale1(*_conn,
                                      "org.freedesktop.locale1",
                                      ObjectPath("/org/freedesktop/locale1"),
-                                     InterfaceName("org.freedesktop.locale1"))
+                                     InterfaceName("org.freedesktop.locale1")),
+                                 _proxyTimedate1(*_conn,
+                                     "org.freedesktop.timedate1",
+                                     ObjectPath("/org/freedesktop/timedate1"),
+                                     InterfaceName("org.freedesktop.timedate1"))
     {
         _iface.RegisterProperty<std::string>(
-            JOSLC_PROP_LOCALE,
-            [&]{ return GetLocale(); },
-            [&](const auto& locale) { SetLocale(locale); }
+            JOSLC_PROP_LOCALE, [&]{ return GetLocale(); }
+        );
+
+        _iface.RegisterProperty<std::string>(
+            JOSLC_PROP_TIMEZONE, [&]{ return GetTimezone(); }
         );
 
         _iface.RegisterMethod("GetLocales", [&](const auto& m) { OnGetLocales(m); });
+        _iface.RegisterMethod("SetLocale", [&](const auto& m) { OnSetLocale(m); });
+        _iface.RegisterMethod("GetTimezones", [&](const auto& m) { OnGetTimezones(m); });
+        _iface.RegisterMethod("SetTimezone", [&](const auto& m) { OnSetTimezone(m); });
 
         DiscoverLocales();
 
         _subLocaleChanged = std::make_unique<SignalSubscription>(
-            _proxy.SubscribePropertyChanged<std::vector<std::string>>(
+            _proxyLocale1.SubscribePropertyChanged<std::vector<std::string>>(
                 "Locale",
                 [&](const std::vector<std::string>& val)
                 {
@@ -54,20 +68,39 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
                 }
             )
         );
+
+        _subTimezoneChanged = std::make_unique<SignalSubscription>(
+            _proxyTimedate1.SubscribePropertyChanged<std::string>(
+                "Timezone",
+                [&](const std::string& val) { EmitTimezoneChanged(val); }
+            )
+        );
     }
 
     LocaleService::~LocaleService() = default;
 
     const std::map<std::string, std::string>& LocaleService::ListLocales() { return _locales; }
 
+    std::vector<std::string> LocaleService::ListTimezones() const
+    {
+        const auto [timezones] = _proxyTimedate1.CallMethod<std::vector<std::string>>("ListTimezones");
+        return timezones;
+    }
+
     std::string LocaleService::GetLocale()
     {
         if (!_currentLocale.empty())
             return _currentLocale;
 
-        const auto locales = _proxy.GetProperty<std::vector<std::string>>("Locale");
+        const auto locales = _proxyLocale1.GetProperty<std::vector<std::string>>("Locale");
         _currentLocale = ReadFreedesktopLocale(locales);
         return _currentLocale;
+    }
+
+    std::string LocaleService::GetTimezone() const
+    {
+        const auto timezone = _proxyLocale1.GetProperty<std::string>("Timezone");
+        return timezone;
     }
 
     void LocaleService::SetLocale(const std::string& locale) const
@@ -76,7 +109,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
             "LANG=" + locale
         };
 
-        _proxy.CallMethodNoReply("SetLocale", localeSettings, false);
+        _proxyLocale1.CallMethodNoReply("SetLocale", localeSettings, false);
+    }
+
+    void LocaleService::SetTimezone(const std::string& timezone, const bool interactive) const
+    {
+        _proxyTimedate1.CallMethodNoReply("SetTimezone", timezone, interactive);
     }
 
     void LocaleService::OnGetLocales(const Message& message) const
@@ -84,6 +122,26 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
         auto msg = Message::CreateMethodReturn(message);
         msg.SetArgs(_locales);
         msg.Send(*_conn);
+    }
+
+    void LocaleService::OnSetLocale(const Message& message) const
+    {
+        const auto [locale, interactive] = message.GetArgs<std::string, bool>();
+        // TODO: Implement auth and interactive
+        SetLocale(locale);
+    }
+
+    void LocaleService::OnGetTimezones(const Message& message) const
+    {
+        auto msg = Message::CreateMethodReturn(message);
+        msg.SetArgs(ListTimezones());
+        msg.Send(*_conn);
+    }
+
+    void LocaleService::OnSetTimezone(const Message& message) const
+    {
+        const auto [timezone, interactive] = message.GetArgs<std::string, bool>();
+        SetTimezone(timezone, interactive);
     }
 
     void LocaleService::EmitLocaleChanged(const std::string& locale) const
@@ -97,6 +155,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
             Log().Err("OnLocaleChanged event handler failed with an error: " + std::string(e.what()));
         }
         Utils::DBusUtils::EmitPropertyChanged(*_conn, _iface, JOSLC_PROP_LOCALE, locale);
+    }
+
+    void LocaleService::EmitTimezoneChanged(const std::string& timezone) const
+    {
+        try
+        {
+            OnTimezoneChanged(timezone);
+        }
+        catch (const std::exception& e)
+        {
+            Log().Err("OnTimezoneChanged event handler failed with an error: " + std::string(e.what()));
+        }
+        Utils::DBusUtils::EmitPropertyChanged(*_conn, _iface, JOSLC_PROP_TIMEZONE, timezone);
     }
 
     void LocaleService::DiscoverLocales()
@@ -124,7 +195,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
 
             try
             {
-                discovered[locale] = GetDisplayName(locale);
+                discovered[locale] = GetLocaleDisplayName(locale);
             }
             catch (const std::exception&)
             {
@@ -143,7 +214,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
         _locales = std::move(discovered);  // Only commit on full success
     }
 
-    std::string LocaleService::GetDisplayName(const std::string& locale)
+    std::string LocaleService::GetLocaleDisplayName(const std::string& locale)
     {
         const icu::Locale loc = icu::Locale::createCanonical(locale.c_str());
 
