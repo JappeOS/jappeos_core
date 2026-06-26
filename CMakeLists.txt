@@ -78,6 +78,8 @@ set(JAPPEOS_SYSTEM_SOURCES
         src/services/installer/steps/validate_install_step.h
         src/services/installer/steps/install_dummy_step.cpp
         src/services/installer/steps/install_dummy_step.h
+        src/services/installer/steps/partition_step.cpp
+        src/services/installer/steps/partition_step.h
 )
 
 set(JAPPEOS_SESSION_SOURCES
