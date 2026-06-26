@@ -28,8 +28,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         void Execute(InstallContext& context) override;
 
     private:
-        void ExecuteErase(const InstallDiskData& diskData) const;
-        void ExecuteManual(const InstallDiskData& diskData) const;
-        void ExecuteCustom(const InstallDiskData& diskData) const;
+        void ExecuteErase(InstallContext& context, const InstallDiskData& diskData) const;
+        void ExecuteManual(InstallContext& context, const InstallDiskData& diskData) const;
+        void ExecuteCustom(InstallContext& context, const InstallDiskData& diskData) const;
     };
 }

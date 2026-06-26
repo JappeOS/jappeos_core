@@ -126,12 +126,23 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
      * ========== RUNTIME INSTALL DATA ==========
      */
 
+    struct InstallPartitionTargetData
+    {
+        std::string device;
+        std::string mountpoint;
+        std::string filesystem;
+        bool format;
+    };
+
     struct InstallContext
     {
         const InstallData& data;
 
         std::string targetRoot;
         std::string rootFsImagePath;
+        std::string bootPartition;
+        std::string rootPartition;
+        std::vector<InstallPartitionTargetData> partitionTargets;
     };
 
     /*
