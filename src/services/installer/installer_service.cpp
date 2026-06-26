@@ -30,6 +30,7 @@
 #include "steps/install_dummy_step.h"
 #include "steps/partition_step.h"
 #include "steps/format_step.h"
+#include "steps/mount_step.h"
 #include "steps/validate_install_step.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
@@ -64,6 +65,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         steps.emplace_back(std::make_unique<Steps::ValidateInstallStep>());
         steps.emplace_back(std::make_unique<Steps::PartitionStep>());
         steps.emplace_back(std::make_unique<Steps::FormatStep>());
+        steps.emplace_back(std::make_unique<Steps::MountStep>());
         steps.emplace_back(std::make_unique<Steps::InstallDummyStep>());
 
         _installController = std::make_unique<InstallController>(

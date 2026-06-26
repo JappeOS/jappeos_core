@@ -82,6 +82,8 @@ set(JAPPEOS_SYSTEM_SOURCES
         src/services/installer/steps/partition_step.h
         src/services/installer/steps/format_step.cpp
         src/services/installer/steps/format_step.h
+        src/services/installer/steps/mount_step.cpp
+        src/services/installer/steps/mount_step.h
 )
 
 set(JAPPEOS_SESSION_SOURCES
