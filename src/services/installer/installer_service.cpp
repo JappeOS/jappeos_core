@@ -28,6 +28,7 @@
 #include "installer_def.h"
 #include "install_storage_data_builder.h"
 #include "steps/install_dummy_step.h"
+#include "steps/partition_step.h"
 #include "steps/validate_install_step.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
@@ -60,6 +61,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 
         std::vector<std::unique_ptr<InstallStep>> steps;
         steps.emplace_back(std::make_unique<Steps::ValidateInstallStep>());
+        steps.emplace_back(std::make_unique<Steps::PartitionStep>());
         steps.emplace_back(std::make_unique<Steps::InstallDummyStep>());
 
         _installController = std::make_unique<InstallController>(
@@ -501,7 +503,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             if (!data.disk.mounts.empty() || !data.disk.operations.empty())
                 throw DBusException(DBUS_ERROR_FAILED, "Erase mode cannot specify 'mounts' or 'operations'");
 
-            constexpr auto minDiskSize = STORAGE_PART_BOOT_MIN_SIZE_MIB + STORAGE_PART_ROOT_MIN_SIZE_MIB;
+            constexpr auto minDiskSize = STORAGE_PART_BOOT_MIN_RECOMMENDED_SIZE_MIB + STORAGE_PART_ROOT_MIN_SIZE_MIB;
             constexpr auto minRecommendedDiskSize = STORAGE_PART_BOOT_MIN_RECOMMENDED_SIZE_MIB + STORAGE_PART_ROOT_MIN_RECOMMENDED_SIZE_MIB;
 
             if (storageDevice->second.sizeMiB < minDiskSize)
