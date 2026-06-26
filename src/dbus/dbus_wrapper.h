@@ -1105,12 +1105,60 @@ namespace JappeStudios::JappeOS::JappeOSCore
                 case DBUS_TYPE_STRUCT:
                     return ReadStruct(it);
 
+                case DBUS_TYPE_ARRAY:
+                    return ReadArray(it);
+
                 default:
                     throw DBusException(
                         DBUS_ERROR_INVALID_ARGS,
                         "Unsupported variant payload"
                     );
             }
+        }
+
+        static std::string GetCurrentSignature(DBusMessageIter& it)
+        {
+            char* rawSig = dbus_message_iter_get_signature(&it);
+            if (!rawSig)
+                throw DBusException(DBUS_ERROR_NO_MEMORY, "Failed to read D-Bus signature");
+
+            std::string signature(rawSig);
+            dbus_free(rawSig);
+            return signature;
+        }
+
+        static DBusVariant ReadArray(DBusMessageIter& it)
+        {
+            const std::string signature = GetCurrentSignature(it);
+
+            if (signature == "ab")
+                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<bool>>::get(it));
+
+            if (signature == "ai")
+                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<int32_t>>::get(it));
+
+            if (signature == "au")
+                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<uint32_t>>::get(it));
+
+            if (signature == "ax")
+                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<int64_t>>::get(it));
+
+            if (signature == "at")
+                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<uint64_t>>::get(it));
+
+            if (signature == "ad")
+                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<double>>::get(it));
+
+            if (signature == "as")
+                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<std::string>>::get(it));
+
+            if (signature == "ao")
+                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<ObjectPath>>::get(it));
+
+            throw DBusException(
+                DBUS_ERROR_INVALID_ARGS,
+                "Unsupported variant array payload: " + signature
+            );
         }
     };
 
