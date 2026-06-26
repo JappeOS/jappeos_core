@@ -99,7 +99,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Locale
 
     std::string LocaleService::GetTimezone() const
     {
-        const auto timezone = _proxyLocale1.GetProperty<std::string>("Timezone");
+        const auto timezone = _proxyTimedate1.GetProperty<std::string>("Timezone");
         return timezone;
     }
 
