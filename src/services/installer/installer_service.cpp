@@ -29,6 +29,7 @@
 #include "install_storage_data_builder.h"
 #include "steps/install_dummy_step.h"
 #include "steps/partition_step.h"
+#include "steps/format_step.h"
 #include "steps/validate_install_step.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
@@ -62,6 +63,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         std::vector<std::unique_ptr<InstallStep>> steps;
         steps.emplace_back(std::make_unique<Steps::ValidateInstallStep>());
         steps.emplace_back(std::make_unique<Steps::PartitionStep>());
+        steps.emplace_back(std::make_unique<Steps::FormatStep>());
         steps.emplace_back(std::make_unique<Steps::InstallDummyStep>());
 
         _installController = std::make_unique<InstallController>(
