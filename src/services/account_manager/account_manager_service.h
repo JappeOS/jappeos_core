@@ -52,6 +52,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             return std::get<0>(args).get<T>();
         }
 
+        void SetUserPassword(const ObjectPath& userObject,
+                             const std::string& cryptedPassword,
+                             const std::string& hint) const;
+
     public:
         const std::vector<std::string> USER_GROUPS = {
             "seat",
@@ -75,9 +79,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         // Internal methods
 
         void CacheUser(const std::string& username) const;
-        void SetUserPassword(const ObjectPath& userObject,
-                             const std::string& cryptedPassword,
-                             const std::string& hint) const;
         void SetUserGroups(const std::string& username) const;
 
     private:

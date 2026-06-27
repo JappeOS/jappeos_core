@@ -103,6 +103,21 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         return obj;
     }
 
+    void AccountManagerService::SetUserPassword(const ObjectPath& userObject,
+                                                const std::string& cryptedPassword,
+                                                const std::string& hint) const
+    {
+        auto fwdMsg = Message::CreateMethodCall(
+            "org.freedesktop.Accounts",
+            userObject,
+            InterfaceName("org.freedesktop.Accounts.User"),
+            "SetPassword"
+        );
+
+        fwdMsg.SetArgs(cryptedPassword, hint);
+        fwdMsg.SendWithReplyIgnore(*_conn);
+    }
+
     // TODO: Polkit
     void AccountManagerService::SharedPolicy(const Message& message) const
     {
@@ -202,21 +217,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         );
 
         fwdMsg.SetArgs(username);
-        fwdMsg.SendWithReplyIgnore(*_conn);
-    }
-
-    void AccountManagerService::SetUserPassword(const ObjectPath& userObject,
-                                                const std::string& cryptedPassword,
-                                                const std::string& hint) const
-    {
-        auto fwdMsg = Message::CreateMethodCall(
-            "org.freedesktop.Accounts",
-            userObject,
-            InterfaceName("org.freedesktop.Accounts.User"),
-            "SetPassword"
-        );
-
-        fwdMsg.SetArgs(cryptedPassword, hint);
         fwdMsg.SendWithReplyIgnore(*_conn);
     }
 
