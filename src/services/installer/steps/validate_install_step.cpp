@@ -25,18 +25,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
 
     void ValidateInstallStep::Execute(InstallContext& context)
     {
-        const std::string path = "/rootfs.tar.zst";
-
-        if (FILE *file = fopen(path.c_str(), "r"))
+        if (FILE *file = fopen(INSTALL_SQFS_PATH_x86_64, "r"))
         {
             fclose(file);
         }
         else
         {
-            throw std::runtime_error("Could not find file `" + path + "` required for install.");
+            throw std::runtime_error(
+                "Could not find file `" + std::string(INSTALL_SQFS_PATH_x86_64) + "` required for install."
+            );
         }
 
-        context.rootFsImagePath = path;
+        context.rootSqFsImagePath = INSTALL_SQFS_PATH_x86_64;
     }
 
 }

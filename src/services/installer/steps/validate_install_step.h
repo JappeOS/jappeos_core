@@ -26,5 +26,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     public:
         [[nodiscard]] std::string Name() const override { return "ValidateInstallStep"; }
         void Execute(InstallContext& context) override;
+
+    public:
+        static constexpr auto INSTALL_SQFS_PATH_x86_64 = "/run/archiso/bootmnt/arch/x86_64/airootfs.sqfs";
     };
 }
