@@ -42,6 +42,67 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
 
     AccountManagerService::~AccountManagerService() = default;
 
+    ObjectPath AccountManagerService::AddUser(const std::string& username,
+                                              const std::string& realName,
+                                              const bool cache) const
+    {
+        if (username.empty() || realName.empty())
+        {
+            throw DBusException(DBUS_ERROR_INVALID_ARGS, "Username or realName cannot be empty.");
+        }
+
+        auto fwdMsg = Message::CreateMethodCall(
+            "org.freedesktop.Accounts",
+            ObjectPath("/org/freedesktop/Accounts"),
+            InterfaceName("org.freedesktop.Accounts"),
+            "CreateUser"
+        );
+
+        fwdMsg.SetArgs(username, realName, 1);
+        const auto reply = fwdMsg.SendWithReply(*_conn);
+        const auto [obj] = reply.GetArgs<ObjectPath>();
+
+        try
+        {
+            if (cache)
+                CacheUser(username);
+        }
+        catch (...)
+        {
+            Log().Warn("User `" + username + "` created, but not cached.");
+        }
+
+        SetUserGroups(username);
+        return obj;
+    }
+
+    void AccountManagerService::RemoveUser(const int64_t id, const bool removeFiles) const
+    {
+        auto fwdMsg = Message::CreateMethodCall(
+            "org.freedesktop.Accounts",
+            ObjectPath("/org/freedesktop/Accounts"),
+            InterfaceName("org.freedesktop.Accounts"),
+            "DeleteUser"
+        );
+
+        fwdMsg.SetArgs(id, removeFiles);
+        fwdMsg.SendWithReplyIgnore(*_conn);
+    }
+
+    std::vector<ObjectPath> AccountManagerService::ListUsers() const
+    {
+        const auto fwdMsg = Message::CreateMethodCall(
+            "org.freedesktop.Accounts",
+            ObjectPath("/org/freedesktop/Accounts"),
+            InterfaceName("org.freedesktop.Accounts"),
+            "ListCachedUsers"
+        );
+
+        const auto reply = fwdMsg.SendWithReply(*_conn);
+        const auto [obj] = reply.GetArgs<std::vector<ObjectPath>>();
+        return obj;
+    }
+
     // TODO: Polkit
     void AccountManagerService::SharedPolicy(const Message& message) const
     {
@@ -129,67 +190,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         auto reply = Message::CreateMethodReturn(message);
         reply.SetArgs(v);
         reply.Send(*_conn);
-    }
-
-    ObjectPath AccountManagerService::AddUser(const std::string& username,
-                                              const std::string& realName,
-                                              const bool cache) const
-    {
-        if (username.empty() || realName.empty())
-        {
-            throw DBusException(DBUS_ERROR_INVALID_ARGS, "Username or realName cannot be empty.");
-        }
-
-        auto fwdMsg = Message::CreateMethodCall(
-            "org.freedesktop.Accounts",
-            ObjectPath("/org/freedesktop/Accounts"),
-            InterfaceName("org.freedesktop.Accounts"),
-            "CreateUser"
-        );
-
-        fwdMsg.SetArgs(username, realName, 1);
-        const auto reply = fwdMsg.SendWithReply(*_conn);
-        const auto [obj] = reply.GetArgs<ObjectPath>();
-
-        try
-        {
-            if (cache)
-                CacheUser(username);
-        }
-        catch (...)
-        {
-            Log().Warn("User `" + username + "` created, but not cached.");
-        }
-
-        SetUserGroups(username);
-        return obj;
-    }
-
-    void AccountManagerService::RemoveUser(const int64_t id, const bool removeFiles) const
-    {
-        auto fwdMsg = Message::CreateMethodCall(
-            "org.freedesktop.Accounts",
-            ObjectPath("/org/freedesktop/Accounts"),
-            InterfaceName("org.freedesktop.Accounts"),
-            "DeleteUser"
-        );
-
-        fwdMsg.SetArgs(id, removeFiles);
-        fwdMsg.SendWithReplyIgnore(*_conn);
-    }
-
-    std::vector<ObjectPath> AccountManagerService::ListUsers() const
-    {
-        const auto fwdMsg = Message::CreateMethodCall(
-            "org.freedesktop.Accounts",
-            ObjectPath("/org/freedesktop/Accounts"),
-            InterfaceName("org.freedesktop.Accounts"),
-            "ListCachedUsers"
-        );
-
-        const auto reply = fwdMsg.SendWithReply(*_conn);
-        const auto [obj] = reply.GetArgs<std::vector<ObjectPath>>();
-        return obj;
     }
 
     void AccountManagerService::CacheUser(const std::string& username) const

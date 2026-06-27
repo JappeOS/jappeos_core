@@ -30,28 +30,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         ~AccountManagerService() override;
         [[nodiscard]] std::string GetName() const override { return "AccountManagerService"; }
 
-    public:
-        const std::vector<std::string> USER_GROUPS = {
-            "seat",
-            "video",
-            "render",
-            "input",
-        };
-
-    private:
-        Object _object;
-        Interface& _iface;
-
-        // D-Bus interface
-
-        void SharedPolicy(const Message& message) const;
-
-        void OnCreateInitialUserWithPassword(const Message& message) const;
-        void OnListUsers(const Message& message) const;
-        void OnGetUserProperty(const Message& message) const;
-
-        // Internal methods
-
         ObjectPath AddUser(const std::string& username,
                            const std::string& realName,
                            bool cache = true) const;
@@ -73,6 +51,28 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
             const auto args = reply.GetArgs<DBusVariant>();
             return std::get<0>(args).get<T>();
         }
+
+    public:
+        const std::vector<std::string> USER_GROUPS = {
+            "seat",
+            "video",
+            "render",
+            "input",
+        };
+
+    private:
+        Object _object;
+        Interface& _iface;
+
+        // D-Bus interface
+
+        void SharedPolicy(const Message& message) const;
+
+        void OnCreateInitialUserWithPassword(const Message& message) const;
+        void OnListUsers(const Message& message) const;
+        void OnGetUserProperty(const Message& message) const;
+
+        // Internal methods
 
         void CacheUser(const std::string& username) const;
         void SetUserPassword(const ObjectPath& userObject,
