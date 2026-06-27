@@ -55,7 +55,23 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         ));
 
         _isLiveEnvironment = false;
-        CreateLoginSession();
+        g_main_context_invoke(
+            nullptr,
+            [](gpointer data)
+            {
+                auto* userdata = static_cast<SessionManagerService*>(data);
+                try
+                {
+                    userdata->CreateLoginSession();
+                }
+                catch (const std::exception& e)
+                {
+                    Log().Crit(std::string("Failed to create login session: ") + e.what());
+                }
+                return G_SOURCE_REMOVE;
+            },
+            this
+        );
     }
 
     SessionManagerService::~SessionManagerService()
