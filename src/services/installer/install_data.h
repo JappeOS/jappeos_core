@@ -139,7 +139,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         const InstallData& data;
 
         std::string targetRoot;
-        std::string rootFsImagePath;
+        std::string rootSqFsImagePath;
         std::string bootPartition;
         std::string rootPartition;
         std::vector<InstallPartitionTargetData> partitionTargets;
