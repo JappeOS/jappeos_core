@@ -18,6 +18,8 @@
 
 #pragma once
 
+#define STORAGE_SYSTEM_FILE_INIT_BOOT_PATH "/jappeos/init_boot.env"
+
 #define STORAGE_MOUNTPOINT_BOOT "/boot"
 #define STORAGE_MOUNTPOINT_ROOT "/"
 
