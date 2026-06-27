@@ -22,9 +22,11 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Utils
 {
-    class DBusUtils
+    class DBusUtils final
     {
     public:
+        DBusUtils() = delete;
+
         /**
          * @param conn A D-Bus connection
          * @param msg The target message tp get the PID from
