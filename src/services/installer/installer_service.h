@@ -67,6 +67,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         void OnVerifyUsername(const Message& message) const;
         void OnVerifyHostname(const Message& message) const;
 
+        void HandleInitialBootup(bool& isLive) const;
         void CreateLocales();
         void CreateTimezones();
         void CreateKeyboardLayouts();
