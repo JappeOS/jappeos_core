@@ -29,6 +29,7 @@ using JappeStudios::JappeOS::JappeOSCore::Utils::CommandRunner;
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
 {
 
+    // TODO: Handle installProprietary and installRecommendedDrivers
     void ConfigureSystemStep::Execute(InstallContext& context)
     {
         if (context.targetRoot.empty())
@@ -48,6 +49,32 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         writer.WriteUsername(context.data.username);
         writer.WritePassword(context.data.password);
         writer.Close();
+
+        const std::filesystem::path packagesToRemovePath(targetRoot / STORAGE_SYSTEM_FILE_LIVE_PACKAGES_PATH);
+        std::ifstream packagesReader(packagesToRemovePath);
+        std::vector<std::string> packages;
+
+        std::string line;
+        while (std::getline(packagesReader, line))
+        {
+            if (line.empty() || line[0] == '#')
+                continue;
+            packages.push_back(line);
+        }
+
+        std::vector<std::string> command = {
+            "arch-chroot",
+            context.targetRoot,
+            "pacman",
+            "-Rns",
+            "--noconfirm"
+        };
+
+        for (const auto& package : packages)
+            command.push_back(package);
+
+        CommandRunner::RunOrThrow(command);
+        std::filesystem::remove(packagesToRemovePath);
     }
 
 }
