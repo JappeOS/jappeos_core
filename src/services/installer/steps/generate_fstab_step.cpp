@@ -18,6 +18,8 @@
 
 #include "generate_fstab_step.h"
 
+#include <fstream>
+
 #include "../../../utils/command_runner.h"
 
 using JappeStudios::JappeOS::JappeOSCore::Utils::CommandRunner;
@@ -31,14 +33,25 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
             throw std::runtime_error("Cannot create fstab with empty target root path");
 
         const std::filesystem::path targetRoot(context.targetRoot);
+        const std::filesystem::path fstabPath = targetRoot / "etc" / "fstab";
 
-        CommandRunner::RunOrThrow({
+        const auto result = CommandRunner::Run({
             "genfstab",
             "-U",
             targetRoot,
-            ">>",
-            targetRoot / "etc" / "fstab",
         });
+        if (result.exitCode != 0)
+            throw Utils::CommandFailedException(
+                {"genfstab", "-U", targetRoot},
+                result.exitCode,
+                result.stdErr.empty() ? "<empty>" : result.stdErr
+            );
+
+        std::ofstream fstab(fstabPath, std::ios::app);
+        if (!fstab)
+            throw std::runtime_error("Failed to open fstab for writing");
+
+        fstab << result.stdOut;
     }
 
 }
