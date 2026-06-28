@@ -37,6 +37,7 @@
 #include "steps/install_rootfs_step.h"
 #include "steps/generate_fstab_step.h"
 #include "steps/configure_system_step.h"
+#include "steps/install_bootloader_step.h"
 #include "steps/validate_install_step.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
@@ -80,6 +81,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         steps.emplace_back(std::make_unique<Steps::InstallRootFsStep>());
         steps.emplace_back(std::make_unique<Steps::GenerateFstabStep>());
         steps.emplace_back(std::make_unique<Steps::ConfigureSystemStep>());
+        steps.emplace_back(std::make_unique<Steps::InstallBootloaderStep>());
         steps.emplace_back(std::make_unique<Steps::InstallDummyStep>());
 
         _installController = std::make_unique<InstallController>(
