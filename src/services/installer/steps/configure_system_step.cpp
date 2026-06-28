@@ -52,8 +52,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
 
         const std::filesystem::path packagesToRemovePath(targetRoot / STORAGE_SYSTEM_FILE_LIVE_PACKAGES_PATH);
         std::ifstream packagesReader(packagesToRemovePath);
-        std::vector<std::string> packages;
+        if (!packagesReader)
+            throw std::runtime_error("Failed to read packages");
 
+        std::vector<std::string> packages;
         std::string line;
         while (std::getline(packagesReader, line))
         {
