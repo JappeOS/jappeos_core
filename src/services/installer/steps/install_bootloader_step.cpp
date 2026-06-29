@@ -22,6 +22,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "../../../utils/command_runner.h"
@@ -45,27 +46,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         if (!std::filesystem::is_directory(bootRoot))
             throw std::runtime_error("Cannot install bootloader because target /boot is missing");
 
-        const auto kernel = FindFirstExisting(
-            bootRoot,
-            {
-                "vmlinuz-linux",
-                "vmlinuz-jappeos",
-                "vmlinuz",
-            },
-            "kernel image"
-        );
+        const auto kernel = FindKernel(bootRoot);
+        const auto kernelName = KernelName(kernel);
 
-        const auto initramfs = FindFirstExisting(
-            bootRoot,
-            {
-                "initramfs-linux.img",
-                "initramfs-jappeos.img",
-                "initramfs.img",
-            },
-            "initramfs image"
-        );
-
-        WriteMkinitcpioConfig(targetRoot);
+        WriteMkinitcpioConfig(targetRoot, kernel);
 
         CommandRunner::RunOrThrow({
             "arch-chroot",
@@ -73,6 +57,28 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
             "mkinitcpio",
             "-P",
         });
+
+        const auto initramfs = FindFirstExisting(
+            bootRoot,
+            {
+                InitramfsImageFileName(kernelName),
+                InitramfsImageFileName("linux"),
+                InitramfsImageFileName("jappeos"),
+                "initramfs.img",
+            },
+            "initramfs image"
+        );
+
+        const auto initramfsFallback = FindFirstExisting(
+            bootRoot,
+            {
+                InitramfsImageFileName(kernelName, true),
+                InitramfsImageFileName("linux", true),
+                InitramfsImageFileName("jappeos", true),
+                "initramfs-fallback.img",
+            },
+            "initramfs fallback image"
+        );
 
         CommandRunner::RunOrThrow({
             "arch-chroot",
@@ -83,7 +89,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         });
 
         WriteLoaderConfig(bootRoot);
-        WriteBootEntry(context, targetRoot, bootRoot, kernel, initramfs);
+        WriteBootEntry(context, targetRoot, bootRoot, kernel, initramfs, initramfsFallback);
     }
 
     std::string InstallBootloaderStep::ToBootLoaderPath(const std::filesystem::path& bootRoot,
@@ -91,6 +97,62 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
         const auto relative = std::filesystem::relative(path, bootRoot);
         return "/" + relative.generic_string();
+    }
+
+    std::string InstallBootloaderStep::ToChrootPath(const std::filesystem::path& systemRoot,
+                                                    const std::filesystem::path& path)
+    {
+        const auto relative = std::filesystem::relative(path, systemRoot);
+        return "/" + relative.generic_string();
+    }
+
+    std::filesystem::path InstallBootloaderStep::FindKernel(const std::filesystem::path& bootRoot)
+    {
+        std::vector<std::filesystem::path> kernels;
+        for (const auto& entry : std::filesystem::directory_iterator(bootRoot))
+        {
+            if (!entry.is_regular_file())
+                continue;
+
+            const auto filename = entry.path().filename().string();
+            if (filename.rfind("vmlinuz-", 0) == 0 || filename == "vmlinuz")
+                kernels.push_back(entry.path());
+        }
+
+        if (kernels.empty())
+            throw std::runtime_error("Could not find kernel image in target /boot");
+
+        for (const auto& kernel : kernels)
+            if (kernel.filename() == "vmlinuz-linux")
+                return kernel;
+
+        return kernels.front();
+    }
+
+    std::string InstallBootloaderStep::KernelName(const std::filesystem::path& kernel)
+    {
+        const auto filename = kernel.filename().string();
+        constexpr std::string_view prefix = "vmlinuz-";
+        if (filename.rfind(prefix, 0) == 0)
+            return filename.substr(prefix.size());
+
+        if (filename == "vmlinuz")
+            return "linux";
+
+        throw std::runtime_error("Unsupported kernel filename: " + filename);
+    }
+
+    std::filesystem::path InstallBootloaderStep::InitramfsImagePath(const std::filesystem::path& bootRoot,
+                                                                    const std::string& kernelName,
+                                                                    const bool isFallback)
+    {
+        return bootRoot / InitramfsImageFileName(kernelName, isFallback);
+    }
+
+    std::string InstallBootloaderStep::InitramfsImageFileName(const std::string& kernelName,
+                                                              const bool isFallback)
+    {
+        return "initramfs-" + kernelName + (isFallback ? "-fallback" : "") + ".img";
     }
 
     std::filesystem::path InstallBootloaderStep::FindFirstExisting(const std::filesystem::path& bootRoot,
@@ -139,41 +201,50 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         return "root=PARTUUID=" + partUuid + " rw " + KERNEL_PARAMS;
     }
 
-    void InstallBootloaderStep::WriteMkinitcpioConfig(const std::filesystem::path& systemRoot)
+    void InstallBootloaderStep::WriteMkinitcpioConfig(const std::filesystem::path& systemRoot,
+                                                      const std::filesystem::path& kernel)
     {
         const auto configDir = systemRoot / "etc" / "mkinitcpio.conf.d";
         const auto presetDir = systemRoot / "etc" / "mkinitcpio.d";
+        const auto mainConfigPath = systemRoot / "etc" / "mkinitcpio.conf";
 
-        for (const auto& entry : std::filesystem::directory_iterator(configDir))
-            std::filesystem::remove_all(entry.path());
-
-        for (const auto& entry : std::filesystem::directory_iterator(presetDir))
-            std::filesystem::remove_all(entry.path());
-
+        std::filesystem::remove_all(configDir);
+        std::filesystem::remove_all(presetDir);
         std::filesystem::create_directories(configDir);
         std::filesystem::create_directories(presetDir);
+
+        std::ofstream mainConfig(mainConfigPath, std::ios::trunc);
+        if (!mainConfig)
+            throw std::runtime_error("Failed to write mkinitcpio.conf");
+
+        mainConfig
+            << "MODULES=()\n"
+            << "BINARIES=()\n"
+            << "FILES=()\n"
+            << "HOOKS=()\n";
 
         std::ofstream config(configDir / "jappeos.conf", std::ios::trunc);
         if (!config)
             throw std::runtime_error("Failed to write mkinitcpio jappeos.conf");
 
         config
-            << "HOOKS=(" << MKINITCPIO_HOOKS << ")\n"
-            << "COMPRESSION=\"xz\"\n"
-            << "COMPRESSION_OPTIONS=(-9e)";
+            << "HOOKS=(" << MKINITCPIO_HOOKS << ")\n";
 
-        std::ofstream preset(presetDir / "linux.preset", std::ios::trunc);
+        const auto kernelName = KernelName(kernel);
+        const auto presetPath = presetDir / (kernelName + ".preset");
+
+        std::ofstream preset(presetPath, std::ios::trunc);
         if (!preset)
-            throw std::runtime_error("Failed to write mkinitcpio linux.preset");
+            throw std::runtime_error("Failed to write mkinitcpio preset");
 
         preset
-            << "# mkinitcpio preset file for the 'linux' package\n"
-            << "PRESETS=('jappeos' 'fallback')\n"
-            << "ALL_config='/etc/mkinitcpio.conf'\n"
-            << "ALL_kver='/boot/vmlinuz-linux'\n"
-            << "default_image='/boot/initramfs-linux.img'\n"
-            << "fallback_image='/boot/initramfs-linux-fallback.img'\n"
-            << "fallback_options='-S autodetect'";
+            << "# mkinitcpio preset file for the '" << kernelName << "' kernel\n"
+            << "PRESETS=('default' 'fallback')\n"
+            << "ALL_config='" << ToChrootPath(systemRoot, mainConfigPath) << "'\n"
+            << "ALL_kver='" << ToChrootPath(systemRoot, kernel) << "'\n"
+            << "default_image='" << ToChrootPath(systemRoot, InitramfsImagePath(systemRoot / "boot", kernelName)) << "'\n"
+            << "fallback_image='" << ToChrootPath(systemRoot, InitramfsImagePath(systemRoot / "boot", kernelName, true)) << "'\n"
+            << "fallback_options='-S autodetect'\n";
     }
 
     void InstallBootloaderStep::WriteLoaderConfig(const std::filesystem::path& bootRoot)
@@ -196,7 +267,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
                                                const std::filesystem::path& systemRoot,
                                                const std::filesystem::path& bootRoot,
                                                const std::filesystem::path& kernel,
-                                               const std::filesystem::path& initramfs)
+                                               const std::filesystem::path& initramfs,
+                                               const std::filesystem::path& initramfsFallback)
     {
         const auto entriesDir = bootRoot / "loader" / "entries";
         std::filesystem::create_directories(entriesDir);
@@ -212,7 +284,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
             << "initrd " << ToBootLoaderPath(bootRoot, initramfs) << "\n"
             << "options " << kernelOptions << "\n";
 
-        std::ofstream cmdline(systemRoot / "etc" / "cmdline.d" / "root.conf", std::ios::trunc);
+        std::ofstream fallbackEntry(entriesDir / "jappeos-fallback.conf", std::ios::trunc);
+        if (!fallbackEntry)
+            throw std::runtime_error("Failed to write systemd-boot fallback entry");
+
+        fallbackEntry
+            << "title JappeOS (Fallback)\n"
+            << "linux " << ToBootLoaderPath(bootRoot, kernel) << "\n"
+            << "initrd " << ToBootLoaderPath(bootRoot, initramfsFallback) << "\n"
+            << "options " << kernelOptions << "\n";
+
+        const auto cmdlineDir = systemRoot / "etc" / "cmdline.d";
+        std::filesystem::create_directories(cmdlineDir);
+
+        std::ofstream cmdline(cmdlineDir / "root.conf", std::ios::trunc);
         if (!cmdline)
             throw std::runtime_error("Failed to write boot options");
 

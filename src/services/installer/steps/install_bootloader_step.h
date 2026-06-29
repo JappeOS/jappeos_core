@@ -18,6 +18,8 @@
 
 #pragma once
 #include <filesystem>
+#include <string>
+#include <vector>
 
 #include "../install_step.h"
 
@@ -27,25 +29,37 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
     public:
         [[nodiscard]] std::string Name() const override { return "InstallBootloaderStep"; }
+        [[nodiscard]] std::string Message() const override { return "Installing bootloader..."; }
         void Execute(InstallContext& context) override;
 
     private:
-        static constexpr auto MKINITCPIO_HOOKS = "base udev plymouth autodetect microcode modconf kms keyboard keymap block filesystems fsck";
+        static constexpr auto MKINITCPIO_HOOKS = "base udev autodetect microcode modconf kms keyboard keymap block filesystems fsck";
         static constexpr auto KERNEL_PARAMS = "quiet splash loglevel=3 rd.systemd.show_status=auto rd.udev.log_level=3 vt.global_cursor_default=0";
 
         static std::string ToBootLoaderPath(const std::filesystem::path& bootRoot,
                                             const std::filesystem::path& path);
+        static std::string ToChrootPath(const std::filesystem::path& systemRoot,
+                                        const std::filesystem::path& path);
+        static std::filesystem::path FindKernel(const std::filesystem::path& bootRoot);
+        static std::string KernelName(const std::filesystem::path& kernel);
+        static std::filesystem::path InitramfsImagePath(const std::filesystem::path& bootRoot,
+                                                        const std::string& kernelName,
+                                                        bool isFallback = false);
+        static std::string InitramfsImageFileName(const std::string& kernelName,
+                                                  bool isFallback = false);
         static std::filesystem::path FindFirstExisting(const std::filesystem::path& bootRoot,
                                                        const std::vector<std::filesystem::path>& candidates,
                                                        const std::string& description);
         static std::string ReadCommandOutput(const std::vector<std::string>& command, const std::string& description);
         static std::string KernelOptions(const InstallContext& context);
-        static void WriteMkinitcpioConfig(const std::filesystem::path& systemRoot);
+        static void WriteMkinitcpioConfig(const std::filesystem::path& systemRoot,
+                                          const std::filesystem::path& kernel);
         static void WriteLoaderConfig(const std::filesystem::path& bootRoot);
         static void WriteBootEntry(const InstallContext& context,
                                    const std::filesystem::path& systemRoot,
                                    const std::filesystem::path& bootRoot,
                                    const std::filesystem::path& kernel,
-                                   const std::filesystem::path& initramfs);
+                                   const std::filesystem::path& initramfs,
+                                   const std::filesystem::path& initramfsFallback);
     };
 }
