@@ -47,7 +47,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
                 result.stdErr.empty() ? "<empty>" : result.stdErr
             );
 
-        std::ofstream fstab(fstabPath, std::ios::app);
+        std::ofstream fstab(fstabPath, std::ios::trunc);
         if (!fstab)
             throw std::runtime_error("Failed to open fstab for writing");
 
