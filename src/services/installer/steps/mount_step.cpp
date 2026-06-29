@@ -65,6 +65,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         }
 
         context.targetRoot = targetRoot.string();
+        context.rootPartition = rootTarget.device;
     }
 
     const InstallPartitionTargetData& MountStep::FindTarget(const InstallContext& context, const std::string& mountpoint)
