@@ -30,7 +30,7 @@
 #include "../../utils/os_utils.h"
 #include "installer_def.h"
 #include "install_storage_data_builder.h"
-#include "steps/install_dummy_step.h"
+#include "steps/validate_install_step.h"
 #include "steps/partition_step.h"
 #include "steps/format_step.h"
 #include "steps/mount_step.h"
@@ -38,7 +38,7 @@
 #include "steps/generate_fstab_step.h"
 #include "steps/configure_system_step.h"
 #include "steps/install_bootloader_step.h"
-#include "steps/validate_install_step.h"
+#include "steps/cleanup_step.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 {
@@ -82,7 +82,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         steps.emplace_back(std::make_unique<Steps::GenerateFstabStep>());
         steps.emplace_back(std::make_unique<Steps::ConfigureSystemStep>());
         steps.emplace_back(std::make_unique<Steps::InstallBootloaderStep>());
-        steps.emplace_back(std::make_unique<Steps::InstallDummyStep>());
+        steps.emplace_back(std::make_unique<Steps::CleanupStep>());
 
         _installController = std::make_unique<InstallController>(
             InstallControllerCallbacks{
