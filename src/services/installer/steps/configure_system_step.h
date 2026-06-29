@@ -27,6 +27,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
     public:
         [[nodiscard]] std::string Name() const override { return "ConfigureSystemStep"; }
+        [[nodiscard]] std::string Message() const override { return "Configuring system..."; }
         void Execute(InstallContext& context) override;
     };
 }

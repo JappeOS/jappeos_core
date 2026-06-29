@@ -64,18 +64,22 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
             packages.push_back(line);
         }
 
-        std::vector<std::string> command = {
-            "arch-chroot",
-            context.targetRoot,
-            "pacman",
-            "-Rns",
-            "--noconfirm"
-        };
+        if (!packages.empty())
+        {
+            std::vector<std::string> command = {
+                "arch-chroot",
+                context.targetRoot,
+                "pacman",
+                "-Rns",
+                "--noconfirm"
+            };
 
-        for (const auto& package : packages)
-            command.push_back(package);
+            for (const auto& package : packages)
+                command.push_back(package);
 
-        CommandRunner::RunOrThrow(command);
+            CommandRunner::RunOrThrow(command);
+        }
+
         std::filesystem::remove(packagesToRemovePath);
     }
 
