@@ -27,6 +27,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
     public:
         [[nodiscard]] std::string Name() const override { return "InstallRootFsStep"; }
+        [[nodiscard]] std::string Message() const override { return "Installing root filesystem..."; }
         void Execute(InstallContext& context) override;
     };
 }

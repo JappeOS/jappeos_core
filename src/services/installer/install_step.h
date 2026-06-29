@@ -28,6 +28,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         virtual ~InstallStep() = default;
 
         [[nodiscard]] virtual std::string Name() const = 0;
+        [[nodiscard]] virtual std::string Message() const = 0;
 
         virtual void Execute(InstallContext& context) = 0;
     };

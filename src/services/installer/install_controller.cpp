@@ -88,7 +88,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
             UpdateProgress(
                 stepName,
                 progress,
-                "Installing..."
+                step->Message()
             );
 
             Log().Info("Installing... step='" + stepName + "', progress='" + std::to_string(progress) + "%'");

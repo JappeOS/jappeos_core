@@ -25,6 +25,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
     public:
         [[nodiscard]] std::string Name() const override { return "ValidateInstallStep"; }
+        [[nodiscard]] std::string Message() const override { return "Validating install..."; }
         void Execute(InstallContext& context) override;
 
     public:

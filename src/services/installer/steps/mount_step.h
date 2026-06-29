@@ -27,6 +27,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
     public:
         [[nodiscard]] std::string Name() const override { return "MountStep"; }
+        [[nodiscard]] std::string Message() const override { return "Mounting storage devices..."; }
         void Execute(InstallContext& context) override;
 
     public:

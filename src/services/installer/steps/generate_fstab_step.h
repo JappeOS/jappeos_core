@@ -27,6 +27,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
     public:
         [[nodiscard]] std::string Name() const override { return "GenerateFstabStep"; }
+        [[nodiscard]] std::string Message() const override { return "Generating fstab..."; }
         void Execute(InstallContext& context) override;
     };
 }

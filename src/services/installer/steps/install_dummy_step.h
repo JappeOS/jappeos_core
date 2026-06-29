@@ -25,6 +25,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
     public:
         [[nodiscard]] std::string Name() const override { return "InstallDummyStep"; }
+        [[nodiscard]] std::string Message() const override { return "Wait..."; }
         void Execute(InstallContext& context) override;
     };
 }

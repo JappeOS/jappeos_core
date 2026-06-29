@@ -25,6 +25,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
     public:
         [[nodiscard]] std::string Name() const override { return "FormatStep"; }
+        [[nodiscard]] std::string Message() const override { return "Formatting..."; }
         void Execute(InstallContext& context) override;
 
     private:

@@ -25,6 +25,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
     {
     public:
         [[nodiscard]] std::string Name() const override { return "PartitionStep"; }
+        [[nodiscard]] std::string Message() const override { return "Partitioning..."; }
         void Execute(InstallContext& context) override;
 
     private:
