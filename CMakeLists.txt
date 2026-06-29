@@ -84,6 +84,14 @@ set(JAPPEOS_SYSTEM_SOURCES
         src/services/installer/steps/format_step.h
         src/services/installer/steps/mount_step.cpp
         src/services/installer/steps/mount_step.h
+        src/services/installer/steps/install_rootfs_step.cpp
+        src/services/installer/steps/install_rootfs_step.h
+        src/services/installer/steps/generate_fstab_step.cpp
+        src/services/installer/steps/generate_fstab_step.h
+        src/services/installer/steps/configure_system_step.cpp
+        src/services/installer/steps/configure_system_step.h
+        src/services/installer/steps/install_bootloader_step.cpp
+        src/services/installer/steps/install_bootloader_step.h
         src/services/installer/init_boot_file.h
         src/utils/os_utils.h
 )
