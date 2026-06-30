@@ -38,7 +38,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         // TODO: Maybe have some fs-overlay thing so that installed system has different packages/files from live system.
 
         const std::filesystem::path targetRoot(context.targetRoot);
-        const std::filesystem::path initFilePath(targetRoot / STORAGE_SYSTEM_FILE_INIT_BOOT_PATH);
+        const std::filesystem::path initFilePath =
+            targetRoot / std::filesystem::path(STORAGE_SYSTEM_FILE_INIT_BOOT_PATH).relative_path();
 
         auto writer = InitBootFile::Writer(initFilePath);
         writer.WriteLocale(context.data.locale);
@@ -50,7 +51,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         writer.WritePassword(context.data.password);
         writer.Close();
 
-        const std::filesystem::path packagesToRemovePath(targetRoot / STORAGE_SYSTEM_FILE_LIVE_PACKAGES_PATH);
+        const std::filesystem::path packagesToRemovePath =
+            targetRoot / std::filesystem::path(STORAGE_SYSTEM_FILE_LIVE_PACKAGES_PATH).relative_path();
         std::ifstream packagesReader(packagesToRemovePath);
         if (!packagesReader)
             throw std::runtime_error("Failed to read packages");
