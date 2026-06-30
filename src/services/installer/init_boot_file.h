@@ -32,11 +32,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         InitBootFile() = delete;
 
         InitBootFile(const InitBootFile&) = delete;
-        InitBootFile(InitBootFile&&) = delete;
+        InitBootFile(InitBootFile&&) noexcept = default;
         InitBootFile& operator=(const InitBootFile&) = delete;
-        InitBootFile& operator=(InitBootFile&&) = delete;
+        InitBootFile& operator=(InitBootFile&&) noexcept = default;
 
-        ~InitBootFile() { Close(); }
+        ~InitBootFile()
+        {
+            try
+            {
+                Close();
+            } catch (...) {}
+        }
 
         void Close()
         {
@@ -91,17 +97,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         {
             if (write)
             {
-                auto writer = std::ofstream();
-                writer.exceptions(std::ios::failbit | std::ios::badbit);
-                writer.open(path);
-                _writer = std::make_optional(std::move(writer));
+                _writer.emplace();
+                _writer->exceptions(std::ios::failbit | std::ios::badbit);
+                _writer->open(path);
             }
             else
             {
-                auto reader = std::ifstream();
-                reader.exceptions(std::ios::failbit | std::ios::badbit);
-                reader.open(path);
-                _reader = std::make_optional(std::move(reader));
+                _reader.emplace();
+                _reader->exceptions(std::ios::failbit | std::ios::badbit);
+                _reader->open(path);
                 ReadFull();
             }
         }
