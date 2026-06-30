@@ -142,7 +142,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         {
             if (!_writer.has_value())
                 throw std::logic_error("Cannot write to InitBootFile: file is open for reading");
-            if (value.find('\n') == std::string::npos)
+            if (value.find('\n') != std::string::npos)
                 throw std::runtime_error("Cannot write to InitBootFile: value cannot contain newline");
             _writer.value() << key << "=" << value << std::endl;
         }
