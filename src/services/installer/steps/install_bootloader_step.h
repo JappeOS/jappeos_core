@@ -40,7 +40,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
                                             const std::filesystem::path& path);
         static std::string ToChrootPath(const std::filesystem::path& systemRoot,
                                         const std::filesystem::path& path);
-        static std::filesystem::path FindKernel(const std::filesystem::path& bootRoot);
+        static std::filesystem::path FindKernelModulesEntry(const std::filesystem::path& systemRoot);
+        static std::string PkgBaseName(const std::filesystem::path& moduleVmlinuz);
         static std::string KernelName(const std::filesystem::path& kernel);
         static std::filesystem::path InitramfsImagePath(const std::filesystem::path& bootRoot,
                                                         const std::string& kernelName,

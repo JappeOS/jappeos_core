@@ -46,8 +46,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         if (!std::filesystem::is_directory(bootRoot))
             throw std::runtime_error("Cannot install bootloader because target /boot is missing");
 
-        const auto kernel = FindKernel(bootRoot);
-        const auto kernelName = KernelName(kernel);
+        /*const auto kernel = FindKernel(bootRoot);
+        const auto kernelName = KernelName(kernel);*/
+
+        const auto moduleVmlinuz = FindKernelModulesEntry(targetRoot);
+        const auto kernelName = PkgBaseName(moduleVmlinuz);
+        const auto kernel = bootRoot / ("vmlinuz-" + kernelName);
+
+        if (!std::filesystem::is_regular_file(kernel))
+            std::filesystem::copy_file(moduleVmlinuz, kernel, std::filesystem::copy_options::overwrite_existing);
 
         WriteMkinitcpioConfig(targetRoot, kernel);
 
@@ -106,27 +113,44 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         return "/" + relative.generic_string();
     }
 
-    std::filesystem::path InstallBootloaderStep::FindKernel(const std::filesystem::path& bootRoot)
+    std::filesystem::path InstallBootloaderStep::FindKernelModulesEntry(const std::filesystem::path& systemRoot)
     {
-        std::vector<std::filesystem::path> kernels;
-        for (const auto& entry : std::filesystem::directory_iterator(bootRoot))
+        const auto modulesDir = systemRoot / "usr" / "lib" / "modules";
+
+        if (!std::filesystem::is_directory(modulesDir))
+            throw std::runtime_error("Could not find /usr/lib/modules in target");
+
+        for (const auto& entry : std::filesystem::directory_iterator(modulesDir))
         {
-            if (!entry.is_regular_file())
+            if (!entry.is_directory())
                 continue;
 
-            const auto filename = entry.path().filename().string();
-            if (filename.rfind("vmlinuz-", 0) == 0 || filename == "vmlinuz")
-                kernels.push_back(entry.path());
+            const auto vmlinuz = entry.path() / "vmlinuz";
+            if (std::filesystem::is_regular_file(vmlinuz))
+                return vmlinuz;
         }
 
-        if (kernels.empty())
-            throw std::runtime_error("Could not find kernel image in target /boot");
+        throw std::runtime_error("Could not find a kernel image under /usr/lib/modules in target");
+    }
 
-        for (const auto& kernel : kernels)
-            if (kernel.filename() == "vmlinuz-linux")
-                return kernel;
+    std::string InstallBootloaderStep::PkgBaseName(const std::filesystem::path& moduleVmlinuz)
+    {
+        const auto pkgbasePath = moduleVmlinuz.parent_path() / "pkgbase";
 
-        return kernels.front();
+        std::ifstream file(pkgbasePath);
+        if (!file)
+            throw std::runtime_error("Could not find pkgbase for kernel at " + moduleVmlinuz.string());
+
+        std::string name;
+        std::getline(file, name);
+
+        while (!name.empty() && (name.back() == '\n' || name.back() == '\r' || name.back() == ' '))
+            name.pop_back();
+
+        if (name.empty())
+            throw std::runtime_error("Empty pkgbase for kernel at " + moduleVmlinuz.string());
+
+        return name;
     }
 
     std::string InstallBootloaderStep::KernelName(const std::filesystem::path& kernel)
@@ -240,7 +264,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
         preset
             << "# mkinitcpio preset file for the '" << kernelName << "' kernel\n"
             << "PRESETS=('default' 'fallback')\n"
-            << "ALL_config='" << ToChrootPath(systemRoot, mainConfigPath) << "'\n"
+            //<< "ALL_config='" << ToChrootPath(systemRoot, mainConfigPath) << "'\n"
             << "ALL_kver='" << ToChrootPath(systemRoot, kernel) << "'\n"
             << "default_image='" << ToChrootPath(systemRoot, InitramfsImagePath(systemRoot / "boot", kernelName)) << "'\n"
             << "fallback_image='" << ToChrootPath(systemRoot, InitramfsImagePath(systemRoot / "boot", kernelName, true)) << "'\n"
