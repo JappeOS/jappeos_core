@@ -106,6 +106,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 _reader.emplace();
                 _reader->exceptions(std::ios::failbit | std::ios::badbit);
                 _reader->open(path);
+                _reader->exceptions(std::ios::badbit);
                 ReadFull();
             }
         }
