@@ -282,7 +282,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer::Steps
 
         config
             << "default jappeos.conf\n"
-            << "timeout 3\n"
+            << "timeout 0\n"
             << "console-mode max\n"
             << "editor no\n";
     }
