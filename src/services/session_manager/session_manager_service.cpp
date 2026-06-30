@@ -55,8 +55,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         ));
 
         _isLiveEnvironment = false;
-        g_main_context_invoke(
-            nullptr,
+        g_idle_add(
             [](gpointer data)
             {
                 auto* userdata = static_cast<SessionManagerService*>(data);
