@@ -96,6 +96,14 @@ proguard/
 # Log Files
 *.log
 
+##### JappeOS local builds
+build-arch/
+*.pkg.tar.*
+pkg/
+srcdest/
+pkgdest/
+srcpkgdest/
+
 # Android Studio Navigation editor temp files
 .navigation/
 

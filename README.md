@@ -76,6 +76,24 @@ cmake --build .
 This will produce the `jappeos_core` executable in the `build/` directory.
 It also produces `jappeos_session`, a separate daemon intended for user-session-level services (it uses the D-Bus **session** bus and the `org.jappeos.Session` interface).
 
+### Arch Container Build
+
+Development can be done from a non-Arch host by building inside the Arch container:
+
+```sh
+./scripts/build-arch.sh
+```
+
+The script builds the `jappeos-core-arch-build` Docker image, then compiles the project inside that image with CMake and Ninja. Outputs are written to `build-arch/` on the host, including both `jappeos_core` and `jappeos_session`.
+
+The build type and output directory can be overridden:
+
+```sh
+CMAKE_BUILD_TYPE=Debug JAPPEOS_ARCH_BUILD_DIR=build-arch-debug ./scripts/build-arch.sh
+```
+
+Both daemon binaries are intended to ship together in the same future pacman package.
+
 For a debug build, use:
 
 ```sh

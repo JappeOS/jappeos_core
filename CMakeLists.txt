@@ -58,8 +58,6 @@ set(JAPPEOS_SYSTEM_SOURCES
         src/services/network_manager/network_connection.h
         src/services/network_manager/network_device_def.h
         src/services/network_manager/network_connection_def.h
-        src/services/bsod/bsod_service.cpp
-        src/services/bsod/bsod_service.h
         src/services/session_manager/session_manager_service.cpp
         src/services/session_manager/session_manager_service.h
         src/services/locale/locale_service.cpp
