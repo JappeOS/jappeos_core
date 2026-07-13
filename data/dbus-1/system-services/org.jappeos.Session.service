@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.jappeos.Session
+Exec=/usr/lib/jappeos_core/jappeos_session

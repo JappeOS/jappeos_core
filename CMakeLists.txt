@@ -3,6 +3,7 @@ project(jappeos_core)
 
 set(CMAKE_CXX_STANDARD 20)
 
+include(GNUInstallDirs)
 find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(DBUS REQUIRED dbus-1)
@@ -190,3 +191,31 @@ add_executable(jappeos_session
 )
 target_compile_definitions(jappeos_session PRIVATE JAPPEOS_DAEMON_SESSION)
 jappeos_configure_target(jappeos_session)
+
+install(TARGETS jappeos_core jappeos_session
+        RUNTIME DESTINATION "${CMAKE_INSTALL_LIBDIR}/jappeos_core"
+)
+
+install(DIRECTORY data/dbus-1/interfaces/
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces"
+        FILES_MATCHING PATTERN "*.xml"
+)
+
+install(DIRECTORY data/dbus-1/system-services/
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/dbus-1/system-services"
+        FILES_MATCHING PATTERN "*.service"
+)
+
+install(DIRECTORY data/dbus-1/system.d/
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/dbus-1/system.d"
+        FILES_MATCHING PATTERN "*.conf"
+)
+
+install(DIRECTORY data/systemd/system/
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/systemd/system"
+        FILES_MATCHING PATTERN "*.service"
+)
+
+install(DIRECTORY data/pam.d/
+        DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/pam.d"
+)
