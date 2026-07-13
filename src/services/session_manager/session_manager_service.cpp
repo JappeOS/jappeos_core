@@ -667,15 +667,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             int retval;
             char status = '0';
 
-            int ttyfd = ActivateTTY(tty_num);
-            if (ttyfd < 0)
-            {
-                write(status_pipe[1], &status, 1);
-                close(status_pipe[1]);
-                close(control_pipe[0]);
-                _exit(1);
-            }
-
             // Initialize PAM in child
             retval = pam_start(service.c_str(), username.c_str(), &conv, &pamh);
             if (retval != PAM_SUCCESS)
@@ -683,7 +674,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 write(status_pipe[1], &status, 1);
                 close(status_pipe[1]);
                 close(control_pipe[0]);
-                close(ttyfd);
                 _exit(1);
             }
 
@@ -699,7 +689,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 close(status_pipe[1]);
                 close(control_pipe[0]);
                 pam_end(pamh, retval);
-                close(ttyfd);
                 _exit(1);
             }
 
@@ -711,7 +700,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 close(status_pipe[1]);
                 close(control_pipe[0]);
                 pam_end(pamh, retval);
-                close(ttyfd);
+                _exit(1);
+            }
+
+            // Switch TTY
+            int ttyfd = ActivateTTY(tty_num);
+            if (ttyfd < 0)
+            {
+                write(status_pipe[1], &status, 1);
+                close(status_pipe[1]);
+                close(control_pipe[0]);
+                pam_end(pamh, retval);
                 _exit(1);
             }
 

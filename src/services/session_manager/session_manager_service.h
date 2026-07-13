@@ -24,6 +24,9 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 {
+    // TODO: Track session main process for crashes
+    // TODO(Jun 30 26): Test wrong-password cases again.
+
     struct PamConversationCtx
     {
         std::string password;
@@ -43,7 +46,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::string        result;
     };
 
-    // TODO: Track session main process for crashes
     class SessionManagerService : public Service
     {
     public:
