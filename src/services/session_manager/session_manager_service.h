@@ -59,7 +59,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     public:
         const bool USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY = false; // TODO: (used for debugging)
-        const char* JOS_CORE_SESSION_BINARY = "/jappeos/jappeos_session";
+        const char* JOS_CORE_SESSION_BINARY = "/usr/lib/jappeos_core/jappeos_session";
         const char* JOS_INSTALLER_BINARY    = "/jappeos/installer/installer";
         const char* JOS_DESKTOP_BINARY      = "/usr/bin/jappeos_desktop";
         const char* JOS_GREETER_BINARY      = "/jappeos/greeter/greeter";
