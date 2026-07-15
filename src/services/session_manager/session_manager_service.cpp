@@ -63,6 +63,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 try
                 {
                     userdata->CreateLoginSession();
+                    ActivateTTY(1);
                 }
                 catch (const std::exception& e)
                 {
@@ -168,11 +169,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     {
         SharedPolicy(message);
         const auto [username, password] = message.GetArgs<std::string, std::string>();
-        if (username.empty() || password.empty())
+        if (username.empty())
         {
             throw DBusException(
                 DBUS_ERROR_INVALID_ARGS,
-                "Missing username or password"
+                "Missing username"
             );
         }
 
