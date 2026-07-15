@@ -57,6 +57,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
                              const std::string& cryptedPassword,
                              const std::string& hint) const;
 
+        void SetUserPasswordMode(const ObjectPath& userObject, int32_t mode) const;
+        void SetUserLocked(const ObjectPath& userObject, bool locked) const;
         void SetUserAutologin(const ObjectPath& userObject, bool autologin) const;
 
     public:

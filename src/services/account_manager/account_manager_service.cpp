@@ -133,6 +133,32 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         fwdMsg.SendWithReplyIgnore(*_conn);
     }
 
+    void AccountManagerService::SetUserPasswordMode(const ObjectPath& userObject, const int32_t mode) const
+    {
+        auto fwdMsg = Message::CreateMethodCall(
+            "org.freedesktop.Accounts",
+            userObject,
+            InterfaceName("org.freedesktop.Accounts.User"),
+            "SetPasswordMode"
+        );
+
+        fwdMsg.SetArgs(mode);
+        fwdMsg.SendWithReplyIgnore(*_conn);
+    }
+
+    void AccountManagerService::SetUserLocked(const ObjectPath& userObject, const bool locked) const
+    {
+        auto fwdMsg = Message::CreateMethodCall(
+            "org.freedesktop.Accounts",
+            userObject,
+            InterfaceName("org.freedesktop.Accounts.User"),
+            "SetLocked"
+        );
+
+        fwdMsg.SetArgs(locked);
+        fwdMsg.SendWithReplyIgnore(*_conn);
+    }
+
     void AccountManagerService::SetUserAutologin(const ObjectPath& userObject, bool autologin) const
     {
         auto fwdMsg = Message::CreateMethodCall(
