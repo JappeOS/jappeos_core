@@ -1,6 +1,6 @@
 pkgname=jappeos_core
 pkgver=1.0.6
-_tag=dev-v1.0.4-1
+_tag=dev-v1.0.5-1
 pkgrel=1
 pkgdesc="Core system daemon for JappeOS."
 arch=('x86_64')
@@ -25,7 +25,6 @@ makedepends=(
 backup=(
   'etc/pam.d/jappeos-greeter'
   'etc/pam.d/jappeos-login'
-  'etc/pam.d/jappeos-login-nopassword'
 )
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$_tag.tar.gz")
 sha256sums=('SKIP')
