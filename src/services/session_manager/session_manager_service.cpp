@@ -30,7 +30,9 @@
 #include <sys/wait.h>
 
 #include "../account_manager/account_manager_service.h"
+#include "../installer/installer_service.h"
 #include "../../utils/dbus_utils.h"
+#include "../../utils/os_utils.h"
 #include "../../utils/scope_guard.h"
 
 using namespace JappeStudios::JappeOS::JappeOSCore::Utils;
@@ -55,7 +57,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             [&](const Message& msg) { HandleUnitNew(msg); }
         ));
 
-        _isLiveEnvironment = false;
+        _isLiveEnvironment = OsUtils::IsLiveOrInstallationEnvironment();
         g_idle_add(
             [](gpointer data)
             {
@@ -63,7 +65,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 try
                 {
                     userdata->CreateLoginSession();
-                    ActivateTTY(1);
+                    //ActivateTTY(1);
                 }
                 catch (const std::exception& e)
                 {
@@ -642,6 +644,27 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     {
         try
         {
+            // TODO: This is a temp-fix because AccountManager tries to create a GDM config file when enabling autologin.
+            // TODO: That is why we don't rely on autologin here, since we cannot use it. We need to handle it ourselves inside
+            // TODO: our account service later on. But for now, check if we're in a live-env and create session here.
+            // TODO: The "AutomaticLogin" path after this if-statement will most likely never run for now.
+            if (_isLiveEnvironment)
+            {
+                std::string sessionId;
+                uid_t uid;
+                std::string seat;
+                CreateSession(
+                    Installer::InstallerService::JOS_LIVE_USER_NAME,
+                    "",
+                    sessionId,
+                    uid,
+                    seat,
+                    false,
+                    PAM_LOGIN_NOPASSWORD_SERVICE
+                );
+                return true;
+            }
+
             const auto accountService = _serviceManager->Get<AccountManager::AccountManagerService>();
 
             if (accountService == nullptr)

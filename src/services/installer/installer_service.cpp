@@ -424,7 +424,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                 const auto user = accountService->AddUser(JOS_LIVE_USER_NAME, JOS_LIVE_USER_REAL_NAME);
                 accountService->SetUserPasswordMode(user, 2);
                 accountService->SetUserLocked(user, false);
-                accountService->SetUserAutologin(user, true);
             }
             catch (const std::exception& ex)
             {
