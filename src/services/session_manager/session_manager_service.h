@@ -104,6 +104,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                            std::string& outSeat,
                            bool isLoginSession = false);
         void StopSession(const std::string& sessionId);
+        bool TryAutologinSession();
 
         void AuthenticateAndOpenPAMSession(const std::string& service,
                                            const std::string& username,

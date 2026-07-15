@@ -29,6 +29,7 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 
+#include "../account_manager/account_manager_service.h"
 #include "../../utils/dbus_utils.h"
 #include "../../utils/scope_guard.h"
 
@@ -363,7 +364,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
         const uid_t uid = pwd->pw_uid;
 
-        // --- 2) PAM Authentication ---
+        // --- 2) Handle automatic login ---
+        if (isLoginSession && TryAutologinSession())
+        {
+            return;
+        }
+
+        // --- 3) PAM Authentication ---
         int controlFd = -1;
         pid_t leaderPid = 0;
         auto cleanupPam = [&]()
@@ -419,7 +426,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             throw DBusException(DBUS_ERROR_AUTH_FAILED, "Authentication failed");
         }
 
-        // --- 3) Session ID ---
+        // --- 4) Session ID ---
         ObjectPath objectPath;
         const std::string sessionId = QueryLogindSessionForUid(pwd->pw_uid, objectPath);
         if (sessionId.empty())
@@ -434,7 +441,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             throw DBusException(DBUS_ERROR_FAILED, "Duplicate session ID");
         }
 
-        // --- 4) Query seat ---
+        // --- 5) Query seat ---
         std::string seat = QueryLogindSeatForSession(sessionId, objectPath);
         if (seat.empty())
         {
@@ -442,7 +449,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             seat = "seat0"; // safe fallback
         }
 
-        // --- 5) Spawn compositor/desktop ---
+        // --- 6) Spawn compositor/desktop ---
         std::string scopeName;
         SpawnUserSessionProcesses(isLoginSession, username, sessionId, seat, scopeName);
         ScopeGuard guard1([&]{ TerminateUserSessionProcesses(sessionId); });
@@ -452,7 +459,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             throw DBusException(DBUS_ERROR_FAILED, "Invalid session scope");
         }
 
-        // --- 6) Insert into session map ---
+        // --- 7) Insert into session map ---
         _sessions[sessionId] =
         {
             sessionId,
@@ -468,7 +475,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         _pendingUnits.push_back(scopeName);
         controlFd = -1;
 
-        // --- 7) Schedule VT switch and login session stop ---
+        // --- 8) Schedule VT switch and login session stop ---
         try
         {
             ActivateLogindSession(sessionId, seat);
@@ -544,7 +551,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             userData
         );*/
 
-        // --- 8) Return data ---
+        // --- 9) Return data ---
         outSessionId = sessionId;
         outUid = uid;
         outSeat = seat;
@@ -625,11 +632,49 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         Log().Info("Stopped session `" + sessionId + "` of user `" + session.username + "`.");
     }
 
+    bool SessionManagerService::TryAutologinSession()
+    {
+        try
+        {
+            const auto accountService = _serviceManager->Get<AccountManager::AccountManagerService>();
+
+            if (accountService == nullptr)
+                throw std::runtime_error("Account service is not available");
+
+            const auto users = accountService->ListUsers();
+            std::optional<ObjectPath> selectedUser = std::nullopt;
+            for (const auto& user : users)
+            {
+                const auto autologin = accountService->GetUserProperty<bool>(user, "AutomaticLogin");
+                if (!autologin)
+                    continue;
+                selectedUser = user;
+            }
+
+            if (!selectedUser.has_value())
+                return false;
+
+            const auto username = accountService->GetUserProperty<std::string>(selectedUser.value(), "UserName");
+
+            std::string sessionId;
+            uid_t uid;
+            std::string seat;
+            CreateSession(username, "", sessionId, uid, seat, false);
+        }
+        catch (const std::exception& e)
+        {
+            Log().Err(std::format("Automatic login failed: {}", e.what()));
+            return false;
+        }
+
+        return true;
+    }
+
     void SessionManagerService::AuthenticateAndOpenPAMSession(const std::string& service,
-                                                                 const std::string& username,
-                                                                 const std::string& password,
-                                                                 int& outControlFd,
-                                                                 pid_t& outChildPid)
+                                                              const std::string& username,
+                                                              const std::string& password,
+                                                              int& outControlFd,
+                                                              pid_t& outChildPid)
     {
         pam_conv conv;
         PamConversationCtx convctx{password};
