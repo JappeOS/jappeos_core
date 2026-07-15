@@ -34,6 +34,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
                            const std::string& realName,
                            bool cache = true) const;
         void RemoveUser(int64_t id, bool removeFiles) const;
+        ObjectPath FindUserById(int64_t id) const;
         std::vector<ObjectPath> ListUsers() const;
 
         template<typename T>
@@ -55,6 +56,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         void SetUserPassword(const ObjectPath& userObject,
                              const std::string& cryptedPassword,
                              const std::string& hint) const;
+
+        void SetUserAutologin(const ObjectPath& userObject, bool autologin) const;
 
     public:
         const std::vector<std::string> USER_GROUPS = {

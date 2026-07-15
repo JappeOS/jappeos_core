@@ -89,6 +89,21 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         fwdMsg.SendWithReplyIgnore(*_conn);
     }
 
+    ObjectPath AccountManagerService::FindUserById(const int64_t id) const
+    {
+        auto fwdMsg = Message::CreateMethodCall(
+            "org.freedesktop.Accounts",
+            ObjectPath("/org/freedesktop/Accounts"),
+            InterfaceName("org.freedesktop.Accounts"),
+            "FindUserById"
+        );
+
+        fwdMsg.SetArgs(id);
+        const auto reply = fwdMsg.SendWithReply(*_conn);
+        const auto [obj] = reply.GetArgs<ObjectPath>();
+        return obj;
+    }
+
     std::vector<ObjectPath> AccountManagerService::ListUsers() const
     {
         const auto fwdMsg = Message::CreateMethodCall(
@@ -115,6 +130,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::AccountManager
         );
 
         fwdMsg.SetArgs(cryptedPassword, hint);
+        fwdMsg.SendWithReplyIgnore(*_conn);
+    }
+
+    void AccountManagerService::SetUserAutologin(const ObjectPath& userObject, bool autologin) const
+    {
+        auto fwdMsg = Message::CreateMethodCall(
+            "org.freedesktop.Accounts",
+            userObject,
+            InterfaceName("org.freedesktop.Accounts.User"),
+            "SetAutomaticLogin"
+        );
+
+        fwdMsg.SetArgs(autologin);
         fwdMsg.SendWithReplyIgnore(*_conn);
     }
 
