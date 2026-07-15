@@ -44,6 +44,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::vector<pid_t> privilegedClientProcesses;
         std::string        activeState;
         std::string        result;
+        bool               installerLaunchScheduled = false;
+        bool               installerStarted = false;
     };
 
     class SessionManagerService : public Service
@@ -60,7 +62,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     public:
         static constexpr bool USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY = false; // TODO: (used for debugging)
         static constexpr auto JOS_CORE_SESSION_BINARY      = "/usr/lib/jappeos_core/jappeos_session";
-        static constexpr auto JOS_INSTALLER_BINARY         = "/jappeos/installer/installer";
+        static constexpr auto JOS_INSTALLER_BINARY         = "/opt/jappeos_installer/jappeos_installer";
         static constexpr auto JOS_DESKTOP_BINARY           = "/usr/bin/jappeos_desktop";
         static constexpr auto JOS_GREETER_BINARY           = "/usr/bin/jappeos_greeter";
         static constexpr auto PAM_GREETER_SERVICE          = "jappeos-greeter";
@@ -119,6 +121,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                        const std::string& sessionId,
                                        const std::string& seat,
                                        std::string& outServiceName) const;
+        void StartInstallerForSession(const SessionInfo& session) const; // <-- TODO: In the future, start from installer service, by listening to session service
         void ActivateLogindSession(const std::string& sessionId, const std::string& seat) const;
         void TerminateUserSessionProcesses(const std::string& sessionId);
         void TerminatePAMForSession(SessionInfo& session) const;

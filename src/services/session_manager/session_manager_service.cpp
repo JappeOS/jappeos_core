@@ -1040,6 +1040,67 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         msg2.SendWithReplyIgnore(*_conn);
     }
 
+    void SessionManagerService::StartInstallerForSession(const SessionInfo& session) const
+    {
+        const auto pwd = getpwnam(session.username.c_str());
+        if (!pwd)
+        {
+            throw std::runtime_error(std::string("Failed to get user: ") + session.username);
+        }
+
+        std::vector<std::tuple<std::string, DBusVariant>> properties{};
+        std::vector<std::tuple<
+            std::string,
+            std::vector<std::string>,
+            bool>> execStart{};
+
+        const std::string runtimeDir = "/run/user/" + std::to_string(pwd->pw_uid);
+
+        properties.emplace_back("Description", DBusVariant::make<std::string>("JappeOS Installer"));
+        properties.emplace_back("Slice",       DBusVariant::make<std::string>("session.slice"));
+        properties.emplace_back("User",        DBusVariant::make<std::string>(std::string(session.username)));
+        properties.emplace_back("PartOf",      DBusVariant::make<std::vector<std::string>>({
+            session.scopeName
+        }));
+        properties.emplace_back("After",       DBusVariant::make<std::vector<std::string>>({
+            session.scopeName
+        }));
+        properties.emplace_back("Environment", DBusVariant::make<std::vector<std::string>>({
+            "XDG_RUNTIME_DIR=" + runtimeDir,
+            std::format("DBUS_SESSION_BUS_ADDRESS=unix:path={}/bus", runtimeDir),
+            "XDG_SEAT=" + session.seat,
+            "XDG_SESSION_CLASS=user",
+            "XDG_SESSION_TYPE=wayland",
+            "XDG_CURRENT_DESKTOP=" + std::string(JOS_DESKTOP_NAME),
+            "WAYLAND_DISPLAY=wayland-0",
+        }));
+
+        execStart.push_back(std::make_tuple(
+            std::string(JOS_INSTALLER_BINARY),
+            std::vector<std::string>{JOS_INSTALLER_BINARY},
+            false
+        ));
+        properties.emplace_back("ExecStart", DBusVariant::make(execStart));
+        properties.emplace_back("Type",      DBusVariant::make(std::string("simple")));
+
+        auto msg = Message::CreateMethodCall(
+            "org.freedesktop.systemd1",
+            ObjectPath("/org/freedesktop/systemd1"),
+            InterfaceName("org.freedesktop.systemd1.Manager"),
+            "StartTransientUnit"
+        );
+
+        msg.SetArgs(
+            "jappeos-installer@" + session.id + ".service",
+            std::string("replace"),
+            properties,
+            std::vector<std::tuple<std::string, std::vector<std::tuple<std::string, DBusVariant>>>>{}
+        );
+
+        msg.SendWithReplyIgnore(*_conn);
+        Log().Info(std::format("Started installer for live session `{}`.", session.id));
+    }
+
     void SessionManagerService::ActivateLogindSession(const std::string& sessionId, const std::string& seat) const
     {
         if (sessionId.empty())
@@ -1223,6 +1284,60 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         Log().Debug("Active state: " + activeState);
         it->second.activeState = activeState;
+
+        if (_isLiveEnvironment
+            && activeState == "active"
+            && it->second.username == Installer::InstallerService::JOS_LIVE_USER_NAME
+            && !it->second.installerLaunchScheduled
+            && !it->second.installerStarted)
+        {
+            it->second.installerLaunchScheduled = true;
+
+            struct InstallerLaunchData
+            {
+                SessionManagerService* self;
+                std::string sessionId;
+            };
+
+            auto* data = new InstallerLaunchData{this, sessionId};
+            g_timeout_add(
+                5000,
+                [](gpointer userData) -> gboolean
+                {
+                    const std::unique_ptr<InstallerLaunchData> data(
+                        static_cast<InstallerLaunchData*>(userData)
+                    );
+                    if (!data || !data->self)
+                        return G_SOURCE_REMOVE;
+
+                    const auto sessionIt = data->self->_sessions.find(data->sessionId);
+                    if (sessionIt == data->self->_sessions.end())
+                        return G_SOURCE_REMOVE;
+
+                    auto& session = sessionIt->second;
+                    if (session.activeState != "active" || session.installerStarted)
+                        return G_SOURCE_REMOVE;
+
+                    session.installerStarted = true;
+                    try
+                    {
+                        data->self->StartInstallerForSession(session);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        Log().Err(std::format(
+                            "Failed to start installer for session `{}`: {}",
+                            data->sessionId,
+                            e.what()
+                        ));
+                    }
+
+                    return G_SOURCE_REMOVE;
+                },
+                data
+            );
+        }
+
         EvaluateSessionState(it->second);
     }
 
