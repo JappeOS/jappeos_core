@@ -35,6 +35,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         ~InstallerService() override;
         [[nodiscard]] std::string GetName() const override { return "InstallerService"; }
 
+    public:
+        const char* JOS_LIVE_USER_NAME = "liveuser";
+        const char* JOS_LIVE_USER_REAL_NAME = "Live User";
+
     private:
         Object     _object;
         Interface& _iface;

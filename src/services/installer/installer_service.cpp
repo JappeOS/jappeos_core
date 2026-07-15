@@ -413,6 +413,22 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         if (Utils::OsUtils::IsLiveOrInstallationEnvironment())
         {
             Log().Notice("We are in a Live-environment, initial boot files will not be read.");
+
+            try
+            {
+                const auto accountService = _serviceManager->Get<AccountManager::AccountManagerService>();
+
+                if (accountService == nullptr)
+                    throw std::runtime_error("Account service is not available");
+
+                const auto user = accountService->AddUser(JOS_LIVE_USER_NAME, JOS_LIVE_USER_REAL_NAME);
+                accountService->SetUserAutologin(user, true);
+            }
+            catch (const std::exception& ex)
+            {
+                Log().Err("Failed to create live-user during initial live environment setup: " + std::string(ex.what()));
+            }
+
             isLive = true;
             return;
         }
