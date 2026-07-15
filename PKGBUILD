@@ -25,6 +25,7 @@ makedepends=(
 backup=(
   'etc/pam.d/jappeos-greeter'
   'etc/pam.d/jappeos-login'
+  'etc/pam.d/jappeos-login-nopassword'
 )
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$_tag.tar.gz")
 sha256sums=('SKIP')

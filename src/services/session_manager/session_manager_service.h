@@ -59,14 +59,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     public:
         const bool USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY = false; // TODO: (used for debugging)
-        const char* JOS_CORE_SESSION_BINARY = "/usr/lib/jappeos_core/jappeos_session";
-        const char* JOS_INSTALLER_BINARY    = "/jappeos/installer/installer";
-        const char* JOS_DESKTOP_BINARY      = "/usr/bin/jappeos_desktop";
-        const char* JOS_GREETER_BINARY      = "/usr/bin/jappeos_greeter";
-        const char* PAM_GREETER_SERVICE     = "jappeos-greeter";
-        const char* PAM_LOGIN_SERVICE       = "jappeos-login";
-        const char* JOS_DESKTOP_NAME        = "JappeOS Desktop";
-        const char* JOS_GREETER_USER        = "jos-greeter";
+        const char* JOS_CORE_SESSION_BINARY      = "/usr/lib/jappeos_core/jappeos_session";
+        const char* JOS_INSTALLER_BINARY         = "/jappeos/installer/installer";
+        const char* JOS_DESKTOP_BINARY           = "/usr/bin/jappeos_desktop";
+        const char* JOS_GREETER_BINARY           = "/usr/bin/jappeos_greeter";
+        const char* PAM_GREETER_SERVICE          = "jappeos-greeter";
+        const char* PAM_LOGIN_SERVICE            = "jappeos-login";
+        const char* PAM_LOGIN_NOPASSWORD_SERVICE = "jappeos-login-nopassword";
+        const char* JOS_DESKTOP_NAME             = "JappeOS Desktop";
+        const char* JOS_GREETER_USER             = "jos-greeter";
 
     private:
         Object _object;
@@ -102,7 +103,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                            std::string& outSessionId,
                            uid_t& outUid,
                            std::string& outSeat,
-                           bool isLoginSession = false);
+                           bool isLoginSession = false,
+                           const char* pamServiceOverride = nullptr);
         void StopSession(const std::string& sessionId);
         bool TryAutologinSession();
 

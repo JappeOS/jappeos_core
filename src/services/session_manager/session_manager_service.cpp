@@ -325,10 +325,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return;
         }
 
+        if (TryAutologinSession())
+        {
+            return;
+        }
+
         std::string sessionId;
         std::string _0;
         uid_t _1;
         CreateSession(JOS_GREETER_USER, "", sessionId, _1, _0, true);
+
         _greeterSessionID = sessionId;
         _isGreeterActive = true;
         Log().Info("Greeter session initialized successfully");
@@ -353,7 +359,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                               std::string& outSessionId,
                                               uid_t& outUid,
                                               std::string& outSeat,
-                                              const bool isLoginSession)
+                                              const bool isLoginSession,
+                                              const char* pamServiceOverride)
     {
         // --- 1) Lookup UID ---
         const passwd* pwd = getpwnam(username.c_str());
@@ -364,13 +371,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
         const uid_t uid = pwd->pw_uid;
 
-        // --- 2) Handle automatic login ---
-        if (isLoginSession && TryAutologinSession())
-        {
-            return;
-        }
-
-        // --- 3) PAM Authentication ---
+        // --- 2) PAM Authentication ---
         int controlFd = -1;
         pid_t leaderPid = 0;
         auto cleanupPam = [&]()
@@ -412,8 +413,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         try
         {
+            const char* pamService = pamServiceOverride
+                ? pamServiceOverride
+                : isLoginSession ? PAM_GREETER_SERVICE : PAM_LOGIN_SERVICE;
+
             AuthenticateAndOpenPAMSession(
-                isLoginSession ? PAM_GREETER_SERVICE : PAM_LOGIN_SERVICE,
+                pamService,
                 username,
                 password,
                 controlFd,
@@ -426,7 +431,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             throw DBusException(DBUS_ERROR_AUTH_FAILED, "Authentication failed");
         }
 
-        // --- 4) Session ID ---
+        // --- 3) Session ID ---
         ObjectPath objectPath;
         const std::string sessionId = QueryLogindSessionForUid(pwd->pw_uid, objectPath);
         if (sessionId.empty())
@@ -441,7 +446,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             throw DBusException(DBUS_ERROR_FAILED, "Duplicate session ID");
         }
 
-        // --- 5) Query seat ---
+        // --- 4) Query seat ---
         std::string seat = QueryLogindSeatForSession(sessionId, objectPath);
         if (seat.empty())
         {
@@ -449,7 +454,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             seat = "seat0"; // safe fallback
         }
 
-        // --- 6) Spawn compositor/desktop ---
+        // --- 5) Spawn compositor/desktop ---
         std::string scopeName;
         SpawnUserSessionProcesses(isLoginSession, username, sessionId, seat, scopeName);
         ScopeGuard guard1([&]{ TerminateUserSessionProcesses(sessionId); });
@@ -459,7 +464,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             throw DBusException(DBUS_ERROR_FAILED, "Invalid session scope");
         }
 
-        // --- 7) Insert into session map ---
+        // --- 6) Insert into session map ---
         _sessions[sessionId] =
         {
             sessionId,
@@ -475,7 +480,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         _pendingUnits.push_back(scopeName);
         controlFd = -1;
 
-        // --- 8) Schedule VT switch and login session stop ---
+        // --- 7) Schedule VT switch and login session stop ---
         try
         {
             ActivateLogindSession(sessionId, seat);
@@ -551,7 +556,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             userData
         );*/
 
-        // --- 9) Return data ---
+        // --- 8) Return data ---
         outSessionId = sessionId;
         outUid = uid;
         outSeat = seat;
@@ -659,7 +664,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             std::string sessionId;
             uid_t uid;
             std::string seat;
-            CreateSession(username, "", sessionId, uid, seat, false);
+            CreateSession(username, "", sessionId, uid, seat, false, PAM_LOGIN_NOPASSWORD_SERVICE);
         }
         catch (const std::exception& e)
         {
