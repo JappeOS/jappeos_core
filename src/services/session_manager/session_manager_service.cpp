@@ -63,7 +63,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 try
                 {
                     userdata->CreateLoginSession();
-                    ActivateTTY(1);
+                    //ActivateTTY(1);
                 }
                 catch (const std::exception& e)
                 {
