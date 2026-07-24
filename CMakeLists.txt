@@ -6,9 +6,6 @@ set(CMAKE_CXX_STANDARD 20)
 include(GNUInstallDirs)
 find_package(PkgConfig REQUIRED)
 
-list(APPEND CMAKE_PREFIX_PATH "/usr/share/cmake/nlohmann_json")
-find_package(nlohmann_json REQUIRED)
-
 pkg_check_modules(DBUS REQUIRED dbus-1)
 pkg_check_modules(PAM REQUIRED pam)
 pkg_check_modules(GLIB REQUIRED glib-2.0)
@@ -19,6 +16,14 @@ pkg_check_modules(PULSE_GLIB REQUIRED libpulse-mainloop-glib)
 pkg_check_modules(UDEV REQUIRED libudev)
 pkg_check_modules(PARTED REQUIRED libparted)
 pkg_check_modules(ICU_74 REQUIRED icu-uc icu-i18n)
+
+include(FetchContent)
+FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(nlohmann_json)
 
 set(JAPPEOS_COMMON_SOURCES
         src/main.cpp
