@@ -208,7 +208,8 @@ install(TARGETS jappeos_core jappeos_session
 )
 
 install(FILES data/jappeos_core/driver_manager/drivers_list.json
-        DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/jappeos_core"
+        DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/jappeos_core/driver_manager"
+        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
 
 install(DIRECTORY data/dbus-1/interfaces/

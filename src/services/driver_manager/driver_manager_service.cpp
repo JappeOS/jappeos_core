@@ -65,6 +65,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
 
         _drivers = finalDrivers;
 
+        if (_drivers.empty())
+            Log().Notice("No drivers found in the drivers_list.json file.");
+
         if (!HardwareFingerprintChanged())
             return;
 
@@ -148,7 +151,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
 
     bool DriverManagerService::TryInstallStaticDriversWithRetry(std::function<void(bool)> resultCallback)
     {
-        if (_tryingToInstallStaticDriversWithRetry)
+        if (_tryingToInstallStaticDriversWithRetry || _drivers.empty())
             return false;
 
         _tryingToInstallStaticDriversWithRetry = true;
@@ -184,10 +187,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
                 {
                     CheckPackages();
                 }
-                catch (std::exception& e)
+                catch (...)
                 {
                     userObj->instance->_tryInstallStaticDriversWithRetryCount++;
-                    Log().Notice("TryInstallStaticDriversWithRetry: CheckPackages failed (retrying): " + std::string(e.what()));
+                    Log().Notice("TryInstallStaticDriversWithRetry: CheckPackages failed (retrying).");
                     return G_SOURCE_CONTINUE;
                 }
 
@@ -349,6 +352,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
 
         if (lastFingerprint == currentFingerprint)
             return false;
+
+        const std::filesystem::path dir = std::filesystem::path(fingerprintPath).parent_path();
+        if (std::error_code ec; !create_directories(dir, ec) && ec)
+            Log().Err("Failed to create directory for fingerprint: " + fingerprintPath);
 
         if (!WriteFile(fingerprintPath, currentFingerprint))
             Log().Err("Failed to write current fingerprint to: " + fingerprintPath);
