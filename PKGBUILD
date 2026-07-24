@@ -1,6 +1,6 @@
 pkgname=jappeos_core
 pkgver=1.0.13
-_tag=dev-v1.0.11-1
+_tag=dev-v1.0.12-1
 pkgrel=1
 pkgdesc="Core system daemon for JappeOS."
 arch=('x86_64')
@@ -16,7 +16,6 @@ depends=(
   'pam'
   'parted'
   'systemd'
-  'nlohmann-json'
 )
 makedepends=(
   'cmake'
