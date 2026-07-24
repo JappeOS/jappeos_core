@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 
 include(GNUInstallDirs)
 find_package(PkgConfig REQUIRED)
+
+list(APPEND CMAKE_PREFIX_PATH "/usr/share/cmake/nlohmann_json")
 find_package(nlohmann_json REQUIRED)
 
 pkg_check_modules(DBUS REQUIRED dbus-1)

@@ -19,7 +19,7 @@
 #include "driver_manager_service.h"
 #include <fstream>
 #include <regex>
-#include <glib/gmain.h>
+#include <glib.h>
 
 #include "../../utils/command_runner.h"
 #include "../network_manager/network_access_point.h"
