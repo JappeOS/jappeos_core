@@ -8,7 +8,7 @@
     "name": "Nvidia Graphics Stack (proprietary)",
     "type": "Static",
     "packages": [
-      "nvidia",
+      "nvidia-open-dkms",
       "nvidia-utils",
       "lib32-nvidia-utils"
     ],

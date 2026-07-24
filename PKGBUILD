@@ -1,5 +1,5 @@
 pkgname=jappeos_core
-pkgver=1.0.13
+pkgver=1.0.14
 _tag=dev-v1.0.13-1
 pkgrel=1
 pkgdesc="Core system daemon for JappeOS."
