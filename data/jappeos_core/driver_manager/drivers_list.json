@@ -1,0 +1,66 @@
+[
+
+  // =============================================================
+  // Graphics drivers
+  // =============================================================
+
+  {
+    "name": "Nvidia Graphics Stack (proprietary)",
+    "type": "Static",
+    "packages": [
+      "nvidia",
+      "nvidia-utils",
+      "lib32-nvidia-utils"
+    ],
+    "deviceFinder": {
+      "path": "/sys/class/drm/",
+      "entryRegex": "^card",
+      "contentMatches": [
+        {
+          "path": "device/vendor",
+          "regex": "^0x10de$"
+        }
+      ]
+    }
+  },
+  {
+    "name": "AMD Graphics Stack",
+    "type": "Static",
+    "packages": [
+      "mesa",
+      "vulkan-radeon",
+      "lib32-mesa",
+      "lib32-vulkan-radeon"
+    ],
+    "deviceFinder": {
+      "path": "/sys/class/drm/",
+      "entryRegex": "^card",
+      "contentMatches": [
+        {
+          "path": "device/vendor",
+          "regex": "^0x1002$"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Intel Graphics Stack",
+    "type": "Static",
+    "packages": [
+      "mesa",
+      "vulkan-intel",
+      "lib32-mesa",
+      "lib32-vulkan-intel"
+    ],
+    "deviceFinder": {
+      "path": "/sys/class/drm/",
+      "entryRegex": "^card",
+      "contentMatches": [
+        {
+          "path": "device/vendor",
+          "regex": "^0x8086$"
+        }
+      ]
+    }
+  }
+]

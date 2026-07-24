@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 include(GNUInstallDirs)
 find_package(PkgConfig REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 pkg_check_modules(DBUS REQUIRED dbus-1)
 pkg_check_modules(PAM REQUIRED pam)
@@ -95,6 +96,8 @@ set(JAPPEOS_SYSTEM_SOURCES
         src/services/installer/steps/cleanup_step.h
         src/services/installer/init_boot_file.h
         src/utils/os_utils.h
+        src/services/driver_manager/driver_manager_service.cpp
+        src/services/driver_manager/driver_manager_service.h
 )
 
 set(JAPPEOS_SESSION_SOURCES
@@ -170,6 +173,7 @@ function(jappeos_configure_target target_name)
             ${UDEV_LIBRARIES}
             ${PARTED_LIBRARIES}
             ${ICU_74_LIBRARIES}
+            nlohmann_json::nlohmann_json
     )
 
     set_target_properties(${target_name} PROPERTIES
@@ -194,6 +198,10 @@ jappeos_configure_target(jappeos_session)
 
 install(TARGETS jappeos_core jappeos_session
         RUNTIME DESTINATION "${CMAKE_INSTALL_LIBDIR}/jappeos_core"
+)
+
+install(FILES data/jappeos_core/driver_manager/drivers_list.json
+        DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/jappeos_core"
 )
 
 install(DIRECTORY data/dbus-1/interfaces/

@@ -20,6 +20,7 @@
 #include "network_connection_def.h"
 #include "network_device_def.h"
 #include "../service.h"
+#include "../../event.h"
 
 typedef struct _NMClient NMClient;
 typedef struct _NMDevice NMDevice;
@@ -37,11 +38,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
     class NetworkManagerService : public Service
     {
     public:
+        Event<const ObjectPath&> OnConnectionAdded;
+        Event<const ObjectPath&> OnConnectionRemoved;
+
         NetworkManagerService(ServiceManager* serviceManager, Connection* conn);
         ~NetworkManagerService() override;
         [[nodiscard]] std::string GetName() const override { return "NetworkManagerService"; }
 
         [[nodiscard]] std::vector<ObjectPath> ListDevices() const;
+        [[nodiscard]] std::vector<ObjectPath> ListConnections() const;
         void WifiScan(NetworkWifiDevice& dev, const Message& message);
         void WifiConnect(NetworkWifiDevice& dev,
                          const std::string& ssid,

@@ -240,6 +240,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         return keys;
     }
 
+    std::vector<ObjectPath> NetworkManagerService::ListConnections() const
+    {
+        auto ks = std::views::keys(_connections);
+        std::vector<ObjectPath> keys{ks.begin(), ks.end()};
+        return keys;
+    }
+
     void NetworkManagerService::WifiScan(NetworkWifiDevice& dev, const Message& message)
     {
         SharedPolicy(message);
@@ -815,6 +822,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             "NetworkManager disappeared during connection attempt"
         );
 
+        for (const auto &path: _connections | std::views::keys)
+        {
+            try
+            {
+                OnConnectionRemoved(path);
+            }
+            catch (const std::exception& e)
+            {
+                _serviceManager->Get<Logger::LoggerService>()->Debug(
+                    "OnConnectionRemoved event handler failed with an error: " + std::string(e.what())
+                );
+            }
+        }
+
         for (const auto &path: _devices | std::views::keys)
         {
             EmitDeviceRemoved(path);
@@ -1046,7 +1067,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
         const auto connPath = it->second->GetActiveConnection();
         if (connPath != ObjectPath{})
+        {
             _connections.erase(connPath);
+            try
+            {
+                OnConnectionRemoved(path);
+            }
+            catch (const std::exception& e)
+            {
+                _serviceManager->Get<Logger::LoggerService>()->Debug(
+                    "OnConnectionRemoved event handler failed with an error: " + std::string(e.what())
+                );
+            }
+        }
 
         _devices.erase(it);
     }
@@ -1086,6 +1119,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             if (oldPath != ObjectPath{})
             {
                 _connections.erase(oldPath);
+                try
+                {
+                    OnConnectionRemoved(oldPath);
+                }
+                catch (const std::exception& e)
+                {
+                    _serviceManager->Get<Logger::LoggerService>()->Debug(
+                        "OnConnectionRemoved event handler failed with an error: " + std::string(e.what())
+                    );
+                }
             }
 
             dev->SetActiveConnection(ObjectPath{});
@@ -1158,6 +1201,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         }
 
         _connections.emplace(path, std::move(conn));
+        try
+        {
+            OnConnectionAdded(path);
+        }
+        catch (const std::exception& e)
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Debug(
+                "OnConnectionAdded event handler failed with an error: " + std::string(e.what())
+            );
+        }
     }
 
     void NetworkManagerService::RemoveConnection(NMActiveConnection* ac)
@@ -1171,6 +1224,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             .Child(EncodeForObjectPath(uuid));
 
         _connections.erase(path);
+        try
+        {
+            OnConnectionRemoved(path);
+        }
+        catch (const std::exception& e)
+        {
+            _serviceManager->Get<Logger::LoggerService>()->Debug(
+                "OnConnectionRemoved event handler failed with an error: " + std::string(e.what())
+            );
+        }
     }
 
     void NetworkManagerService::SubscribeToActiveConnectionSignals(NMActiveConnection* ac)
