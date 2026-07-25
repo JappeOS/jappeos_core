@@ -25,21 +25,21 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
 {
+    enum class DriverType
+    {
+        Static,
+        Additional,
+    };
+
+    NLOHMANN_JSON_SERIALIZE_ENUM(DriverType, {
+        {DriverType::Static, "Static"},
+        {DriverType::Additional, "Additional"},
+    })
+
     // TODO: Implement non-static driver handling
     class DriverManagerService : public Service
     {
     private:
-        enum class DriverType
-        {
-            Static,
-            Additional,
-        };
-
-        NLOHMANN_JSON_SERIALIZE_ENUM(DriverType, {
-            {DriverType::Static, "Static"},
-            {DriverType::Additional, "Additional"},
-        })
-
         struct PathDriverDeviceFinderContentMatchInfo
         {
             std::string path;
