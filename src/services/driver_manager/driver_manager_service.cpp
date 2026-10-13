@@ -438,6 +438,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
     {
         Utils::CommandRunner::RunOrThrow({
             "pacman",
+            "--noconfirm",
             "-Syu",
             package,
         });
@@ -449,6 +450,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         {
             Utils::CommandRunner::RunOrThrow({
                 "pacman",
+                "--noconfirm",
                 "-Rs",
                 package,
             });
@@ -465,6 +467,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
     {
         Utils::CommandRunner::RunOrThrow({
             "pacman",
+            "--noconfirm",
             "-Sy",
             "--dbonly",
         });
