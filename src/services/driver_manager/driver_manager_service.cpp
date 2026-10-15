@@ -347,8 +347,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
     {
         const std::string fingerprintPath = "/etc/jappeos_core/driver_manager/hardware.txt";
 
-        const std::string lastFingerprint = ReadFile(fingerprintPath);
-        const std::string currentFingerprint = GetCurrentHardwareFingerprint();
+        const std::string lastFingerprint = ReadFileTrimmed(fingerprintPath);
+        const std::string currentFingerprint = GetCurrentHardwareFingerprint().value_or("?");
 
         if (lastFingerprint == currentFingerprint)
             return false;
@@ -363,75 +363,92 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         return true;
     }
 
-    std::string DriverManagerService::GetCurrentHardwareFingerprint()
+    // nullopt = "couldn't determine", which is NOT the same as "hardware changed".
+    std::optional<std::string> DriverManagerService::GetCurrentHardwareFingerprint()
     {
-        std::ostringstream fingerprint;
-
-        // -----------------
-        // GPU(s)
-        // -----------------
-
-        std::vector<std::filesystem::path> cards;
-
-        for (const auto& entry : std::filesystem::directory_iterator("/sys/class/drm"))
+        // Every display-class PCI device, whether or not a driver is bound.
+        const auto collectGpus = []() -> std::vector<std::string>
         {
-            if (!entry.is_directory())
-                continue;
+            std::vector<std::string> out;
+            std::error_code ec;
 
-            auto name = entry.path().filename().string();
+            for (std::filesystem::directory_iterator it("/sys/bus/pci/devices", ec), end;
+                 !ec && it != end; it.increment(ec))
+            {
+                const auto& p = it->path();
 
-            // card0, card1...
-            if (name.rfind("card", 0) != 0)
-                continue;
+                // class is e.g. "0x030000"; base class 0x03 = display controller
+                // (covers VGA 0x0300, 3D 0x0302, other 0x0380)
+                std::string cls = ReadFileTrimmed(p / "class");
+                if (cls.compare(0, 4, "0x03") != 0)
+                    continue;
 
-            // Ignore connectors like card0-HDMI-A-1
-            if (name.find('-') != std::string::npos)
-                continue;
+                std::string vendor = ReadFileTrimmed(p / "vendor");
+                std::string device = ReadFileTrimmed(p / "device");
+                if (vendor.empty() || device.empty())
+                    continue;
 
-            cards.push_back(entry.path());
-        }
+                out.push_back("gpu=" + vendor + ":" + device);
+            }
 
-        std::sort(cards.begin(), cards.end());
+            // Sort the content, not the names. Duplicates are kept on purpose:
+            // two identical GPUs is a different config than one.
+            std::sort(out.begin(), out.end());
+            return out;
+        };
 
-        for (const auto& card : cards)
+        // Distinct CPU identities across all cores, so core count doesn't matter
+        // and mixed setups (big.LITTLE, odd multi-socket) are covered.
+        const auto collectCpus = []() -> std::set<std::string>
         {
-            fingerprint
-                << ReadFile(card / "device/vendor")
-                << ReadFile(card / "device/device");
-        }
+            static const char* kKeys[] = {
+                // x86
+                "vendor_id", "cpu family", "model", "stepping",
+                // ARM
+                "CPU implementer", "CPU architecture", "CPU variant",
+                "CPU part", "CPU revision",
+            };
 
-        // -----------------
-        // CPU
-        // -----------------
+            std::set<std::string> out;
+            std::map<std::string, std::string> block;
+            std::ifstream f("/proc/cpuinfo");
+            std::string line;
 
-        fingerprint
-            << ReadFile("/sys/devices/system/cpu/cpu0/topology/physical_package_id");
-
-        std::ifstream cpuinfo("/proc/cpuinfo");
-        std::string line;
-
-        while (std::getline(cpuinfo, line))
-        {
-            if (line.starts_with("vendor_id"))
+            auto flush = [&]
             {
-                fingerprint << line.substr(line.find(':') + 1);
-            }
-            else if (line.starts_with("cpu family"))
-            {
-                fingerprint << line.substr(line.find(':') + 1);
-            }
-            else if (line.starts_with("model\t"))
-            {
-                fingerprint << line.substr(line.find(':') + 1);
-            }
-            else if (line.starts_with("stepping"))
-            {
-                fingerprint << line.substr(line.find(':') + 1);
-                break; // only need first CPU
-            }
-        }
+                std::string s;
+                for (const char* k : kKeys)
+                    if (auto it = block.find(k); it != block.end())
+                        s += std::string(k) + "=" + it->second + ",";
+                if (!s.empty()) out.insert(s);
+                block.clear();
+            };
 
-        return fingerprint.str();
+            while (std::getline(f, line))
+            {
+                if (TrimString(line).empty())
+                {
+                    flush();
+                    continue;
+                }
+                auto colon = line.find(':');
+                if (colon == std::string::npos)
+                    continue;
+                block[TrimString(line.substr(0, colon))] = TrimString(line.substr(colon + 1));
+            }
+            flush();
+            return out;
+        };
+
+        const auto cpus = collectCpus();
+        if (cpus.empty())
+            return std::nullopt;
+
+        std::ostringstream fp;
+        fp << "v1;";                       // bump if you change the format
+        for (const auto& g : collectGpus()) fp << g << ';';
+        for (const auto& c : cpus)          fp << "cpu{" << c << "};";
+        return fp.str();
     }
 
     void DriverManagerService::InstallPackage(const std::string& package)
@@ -473,7 +490,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         });
     }
 
-    std::string DriverManagerService::ReadFile(const std::filesystem::path& path)
+    std::string DriverManagerService::ReadFileTrimmed(const std::filesystem::path& path)
     {
         std::ifstream file(path);
         if (!file)
@@ -483,9 +500,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         std::getline(file, value);
 
         // Remove whitespace/newlines
-        std::erase_if(value, ::isspace);
-
-        return value;
+        return TrimString(value);
     }
 
     bool DriverManagerService::WriteFile(const std::filesystem::path& path, const std::string& content)
@@ -498,6 +513,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         file.close();
 
         return file.good();
+    }
+
+    std::string DriverManagerService::TrimString(const std::string& s)
+    {
+        const auto b = s.find_first_not_of(" \t\r\n");
+        if (b == std::string::npos) return {};
+        const auto e = s.find_last_not_of(" \t\r\n");
+        return s.substr(b, e - b + 1);
     }
 
 }

@@ -107,13 +107,14 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         static bool HasDeviceForDriver(const PathDriverDeviceFinderInfo& finder);
 
         static bool HardwareFingerprintChanged();
-        static std::string GetCurrentHardwareFingerprint();
+        static std::optional<std::string> GetCurrentHardwareFingerprint();
 
         static void InstallPackage(const std::string& package);
         static bool TryRemovePackage(const std::string& package);
         static void CheckPackages();
 
-        static std::string ReadFile(const std::filesystem::path& path);
+        static std::string ReadFileTrimmed(const std::filesystem::path& path);
         static bool WriteFile(const std::filesystem::path& path, const std::string& content);
+        static std::string TrimString(const std::string& s);
     };
 };
