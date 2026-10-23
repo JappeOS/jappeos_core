@@ -962,6 +962,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             "XDG_SESSION_TYPE=wayland",
             "XDG_CURRENT_DESKTOP=" + std::string(JOS_DESKTOP_NAME),
             "ZENITH_MULTI_MONITOR_MODE=extend",
+            "ZENITH_TRACE_FRAME_TIMING=1",
             "LIBSEAT_BACKEND=logind",
             std::vformat("LD_LIBRARY_PATH=/usr/lib:/lib:{}", std::make_format_args(lib)),
             std::vformat(
