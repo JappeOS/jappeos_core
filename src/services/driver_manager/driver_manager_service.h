@@ -18,6 +18,10 @@
 
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <string>
 #include <nlohmann/json.hpp>
 #include "../service.h"
@@ -76,12 +80,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         Object _object;
         Interface& _iface;
 
+        // Populated before starting the worker; read-only thereafter.
         std::map<std::string, DriverInfo> _drivers;
         bool _newConnSubExists = false;
         std::size_t _newConnSub;
 
-        bool _tryingToInstallStaticDriversWithRetry = false;
-        int _tryInstallStaticDriversWithRetryCount = 0;
+        std::atomic<bool> _stopping{false};
+        std::mutex _workerMutex;
+        std::condition_variable _workerCv;
+        bool _installRequested = true;
+        bool _installing = false;
+        bool _installationComplete = false;
+        std::thread _workerThread;
 
         void OnListAvailableDrivers(const Message& message) const;
         void OnListAvailableAdditionalDrivers(const Message& message) const;
@@ -90,7 +100,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         void HandleNetworkConnectionAdded();
         void UnsubscribeNetworkConnectionAdded();
 
-        bool TryInstallStaticDriversWithRetry(std::function<void(bool)> resultCallback);
+        void ThreadFunc();
+        bool TryInstallStaticDriversWithRetry();
+        bool InstallDriver(const DriverInfo& driver) const;
+        bool WaitForRetry();
         void CleanupStaticDrivers();
 
     private:
@@ -103,7 +116,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         }
 
         static std::vector<DriverInfo> ParseDriverInfoFile(const std::string& filePath);
-        static bool InstallDriver(const DriverInfo& driver);
         static bool HasDeviceForDriver(const PathDriverDeviceFinderInfo& finder);
 
         static bool HardwareFingerprintChanged();

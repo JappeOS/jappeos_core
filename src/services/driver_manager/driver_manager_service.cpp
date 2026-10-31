@@ -19,7 +19,7 @@
 #include "driver_manager_service.h"
 #include <fstream>
 #include <regex>
-#include <glib.h>
+#include <chrono>
 
 #include "../../utils/command_runner.h"
 #include "../network_manager/network_access_point.h"
@@ -68,26 +68,37 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         if (_drivers.empty())
             Log().Notice("No drivers found in the drivers_list.json file.");
 
-        if (!HardwareFingerprintChanged())
-            return;
-
-        Log().Info("Hardware fingerprint changed. Static drivers will be installed.");
-
+        // Event subscriptions belong to the main thread: Event is not thread-safe.
         _newConnSub = _serviceManager
                 ->Get<NetworkManager::NetworkManagerService>()
-                ->OnConnectionAdded.Subscribe([&](const ObjectPath&) { HandleNetworkConnectionAdded(); });
+                ->OnConnectionAdded.Subscribe([this](const ObjectPath&) { HandleNetworkConnectionAdded(); });
         _newConnSubExists = true;
 
-        TryInstallStaticDriversWithRetry([&](const bool success)
+        try
         {
-            if (success)
-                UnsubscribeNetworkConnectionAdded();
-        });
+            _workerThread = std::thread([this] { ThreadFunc(); });
+        }
+        catch (...)
+        {
+            UnsubscribeNetworkConnectionAdded();
+            throw;
+        }
     }
 
     DriverManagerService::~DriverManagerService()
     {
         UnsubscribeNetworkConnectionAdded();
+        {
+            std::lock_guard lock(_workerMutex);
+            _stopping = true;
+        }
+
+        _workerCv.notify_all();
+
+        // Do not interrupt a running pacman transaction. The worker observes stop
+        // between operations, and all members stay alive until it has exited.
+        if (_workerThread.joinable())
+            _workerThread.join();
     }
 
     void DriverManagerService::OnListAvailableDrivers(const Message& message) const
@@ -131,11 +142,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
 
     void DriverManagerService::HandleNetworkConnectionAdded()
     {
-        TryInstallStaticDriversWithRetry([&](const bool success)
         {
-            if (success)
-                UnsubscribeNetworkConnectionAdded();
-        });
+            std::lock_guard lock(_workerMutex);
+            if (_stopping || _installationComplete || _installing)
+                return;
+            _installRequested = true;
+        }
+        _workerCv.notify_one();
     }
 
     void DriverManagerService::UnsubscribeNetworkConnectionAdded()
@@ -149,115 +162,91 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         _newConnSubExists = false;
     }
 
-    bool DriverManagerService::TryInstallStaticDriversWithRetry(std::function<void(bool)> resultCallback)
+    void DriverManagerService::ThreadFunc()
     {
-        if (_tryingToInstallStaticDriversWithRetry || _drivers.empty())
-            return false;
-
-        _tryingToInstallStaticDriversWithRetry = true;
-        _tryInstallStaticDriversWithRetryCount = 0;
-
-        struct UserData
+        try
         {
-            DriverManagerService* instance;
-            std::function<void(bool)> resultCallback;
-        };
+            if (_stopping || _drivers.empty() || !HardwareFingerprintChanged())
+                return;
 
-        auto* userdata = new UserData
-        {
-            .instance = this,
-            .resultCallback = std::move(resultCallback),
-        };
-
-        g_timeout_add_seconds_full(
-            G_PRIORITY_DEFAULT,
-            5,
-            [](gpointer data) -> gboolean
+            Log().Info("Hardware fingerprint changed. Static drivers will be installed.");
+            std::unique_lock lock(_workerMutex);
+            while (!_stopping)
             {
-                const auto* userObj = static_cast<UserData*>(data);
-                if (userObj->instance->_tryInstallStaticDriversWithRetryCount >= TRY_INSTALL_STATIC_DRIVERS_RETRY_COUNT)
-                {
-                    userObj->instance->_tryingToInstallStaticDriversWithRetry = false;
-                    Log().Notice("TryInstallStaticDriversWithRetry: Max retry count reached.");
-                    userObj->resultCallback(false);
-                    return G_SOURCE_REMOVE;
-                }
+                _workerCv.wait(lock, [this] { return _stopping || _installRequested; });
+                if (_stopping)
+                    return;
 
-                try
-                {
-                    CheckPackages();
-                }
-                catch (...)
-                {
-                    userObj->instance->_tryInstallStaticDriversWithRetryCount++;
-                    Log().Notice("TryInstallStaticDriversWithRetry: CheckPackages failed (retrying).");
-                    return G_SOURCE_CONTINUE;
-                }
+                _installRequested = false;
+                _installing = true;
+                lock.unlock();
 
-                try
+                const bool success = TryInstallStaticDriversWithRetry();
+                lock.lock();
+                _installing = false;
+                if (success)
                 {
-                    userObj->instance->CleanupStaticDrivers();
-                    for (const auto &val: userObj->instance->_drivers | std::views::values)
-                    {
-                        if (val.type != DriverType::Static)
-                            continue;
-                        InstallDriver(val);
-                    }
+                    _installationComplete = true;
+                    return;
                 }
-                catch (std::exception& e)
-                {
-                    Log().Crit("TryInstallStaticDriversWithRetry: Driver installation failed, even though CheckPackages succeeded, therefore drivers will not be installed: " + std::string(e.what()));
-                }
-
-                userObj->instance->_tryingToInstallStaticDriversWithRetry = false;
-                Log().Info("TryInstallStaticDriversWithRetry: Done.");
-                userObj->resultCallback(true);
-                return G_SOURCE_REMOVE;
-            },
-            userdata,
-            [](gpointer data)
-            {
-                delete static_cast<UserData*>(data);
             }
-        );
-
-        return true;
+        }
+        catch (const std::exception& e)
+        {
+            Log().Err("Driver worker failed: " + std::string(e.what()));
+        }
+        catch (...)
+        {
+            Log().Err("Driver worker failed with an unknown exception.");
+        }
     }
 
-    void DriverManagerService::CleanupStaticDrivers()
+    bool DriverManagerService::TryInstallStaticDriversWithRetry()
     {
-        for (const auto &val: _drivers | std::views::values)
+        for (int attempt = 0; attempt < TRY_INSTALL_STATIC_DRIVERS_RETRY_COUNT; ++attempt)
         {
-            if (val.type != DriverType::Static)
+            if (!WaitForRetry())
+                return false;
+
+            try
+            {
+                CheckPackages();
+            }
+            catch (const std::exception& e)
+            {
+                Log().Notice("CheckPackages failed (retrying): " + std::string(e.what()));
                 continue;
+            }
 
-            for (const auto& pkg : val.packages)
+            if (_stopping)
+                return false;
+
+            try
             {
-                if (!TryRemovePackage(pkg))
+                CleanupStaticDrivers();
+                for (const auto& driver : _drivers | std::views::values)
                 {
-                    Log().Notice(std::format(
-                        "CleanupStaticDrivers: Failed removing package `{}` while cleaning up packages for driver `{}`. Some other package might depend on it.",
-                        pkg,
-                        val.name
-                    ));
+                    if (_stopping)
+                        return false;
+                    if (driver.type == DriverType::Static)
+                        InstallDriver(driver);
                 }
             }
+            catch (const std::exception& e)
+            {
+                Log().Err("Driver installation failed: " + std::string(e.what()));
+                return false;
+            }
+
+            Log().Info("TryInstallStaticDriversWithRetry: Done.");
+            return true;
         }
+
+        Log().Notice("TryInstallStaticDriversWithRetry: Max retry count reached.");
+        return false;
     }
 
-    std::vector<DriverManagerService::DriverInfo> DriverManagerService::ParseDriverInfoFile(const std::string& filePath)
-    {
-        std::ifstream file(filePath);
-        if (!file.is_open())
-        {
-            throw std::runtime_error("Failed to open driver info file: " + filePath);
-        }
-
-        const json j = json::parse(file, nullptr, true, true);
-        return j.get<std::vector<DriverInfo>>();
-    }
-
-    bool DriverManagerService::InstallDriver(const DriverInfo& driver)
+    bool DriverManagerService::InstallDriver(const DriverInfo& driver) const
     {
         if (!HasDeviceForDriver(driver.deviceFinder))
             return false;
@@ -268,6 +257,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         bool allSuccess = true;
         for (const auto& pkg : driver.packages)
         {
+            if (_stopping)
+                return false;
+
             try
             {
                 InstallPackage(pkg);
@@ -297,6 +289,52 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
             Log().Notice("Driver was installed successfully: " + driver.name);
 
         return true;
+    }
+
+    bool DriverManagerService::WaitForRetry()
+    {
+        std::unique_lock lock(_workerMutex);
+        return !_workerCv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [this] { return _stopping.load(); }
+        );
+    }
+
+    void DriverManagerService::CleanupStaticDrivers()
+    {
+        for (const auto &val: _drivers | std::views::values)
+        {
+            if (val.type != DriverType::Static)
+                continue;
+
+            for (const auto& pkg : val.packages)
+            {
+                if (_stopping)
+                    return;
+
+                if (!TryRemovePackage(pkg))
+                {
+                    Log().Notice(std::format(
+                        "CleanupStaticDrivers: Failed removing package `{}` while cleaning up packages for driver `{}`. Some other package might depend on it.",
+                        pkg,
+                        val.name
+                    ));
+                }
+            }
+        }
+    }
+
+    std::vector<DriverManagerService::DriverInfo> DriverManagerService::ParseDriverInfoFile(const std::string& filePath)
+    {
+        std::ifstream file(filePath);
+        if (!file.is_open())
+        {
+            throw std::runtime_error("Failed to open driver info file: " + filePath);
+        }
+
+        const json j = json::parse(file, nullptr, true, true);
+        return j.get<std::vector<DriverInfo>>();
     }
 
     bool DriverManagerService::HasDeviceForDriver(const PathDriverDeviceFinderInfo& finder)
