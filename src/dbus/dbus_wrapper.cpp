@@ -219,6 +219,20 @@ namespace JappeStudios::JappeOS::JappeOSCore
             throw DBusException(DBUS_ERROR_NO_MEMORY, "Failed to connect to D-Bus bus.");
     }
 
+    Connection::Connection(const std::string& peerAddress) : _peer(true)
+    {
+        DBusError error;
+        dbus_error_init(&error);
+        _conn = dbus_connection_open_private(peerAddress.c_str(), &error);
+        if (!_conn)
+        {
+            const std::string message = error.message ? error.message : "Cannot open peer connection";
+            dbus_error_free(&error);
+            throw DBusException(DBUS_ERROR_FAILED, message);
+        }
+        dbus_connection_set_exit_on_disconnect(_conn, false);
+    }
+
     Connection::Connection(DBusConnection* conn)
     {
         if (!conn)
@@ -230,10 +244,13 @@ namespace JappeStudios::JappeOS::JappeOSCore
     Connection::~Connection()
     {
         if (_conn)
+        {
+            if (_peer) dbus_connection_close(_conn);
             dbus_connection_unref(_conn);
+        }
     }
 
-    Connection::Connection(Connection&& other) noexcept : _conn(other._conn)
+    Connection::Connection(Connection&& other) noexcept : _conn(other._conn), _peer(other._peer)
     {
         other._conn = nullptr;
     }
@@ -242,10 +259,18 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         if (this != &other)
         {
-            if (_conn) dbus_connection_unref(_conn);
+            if (_conn)
+            {
+                if (_peer)
+                    dbus_connection_close(_conn);
+                dbus_connection_unref(_conn);
+            }
+
             _conn = other._conn;
+            _peer = other._peer;
             other._conn = nullptr;
         }
+
         return *this;
     }
 
@@ -294,6 +319,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     void Connection::AddMatch(const std::string& rule) const
     {
+        if (_peer)
+            return;
+
         DBusError err;
         dbus_error_init(&err);
 
@@ -309,6 +337,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     void Connection::RemoveMatch(const std::string& rule) const
     {
+        if (_peer)
+            return;
+
         DBusError err;
         dbus_error_init(&err);
 
@@ -405,11 +436,17 @@ namespace JappeStudios::JappeOS::JappeOSCore
         if (it == _signalHandlers.end())
             return false;
 
-        for (auto& handler : it->second)
+        // A callback may remove subscriptions (including itself) or add others.
+        const auto handlers = it->second;
+        for (const auto& handler : handlers)
         {
+            if (!handler || !*handler)
+                continue;
+
+            const auto callback = *handler;
             try
             {
-                handler(msg);
+                callback(msg);
             }
             catch (const std::exception&) {} // TODO: Proper exception handling
         }
@@ -436,7 +473,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         auto& list = _conn._signalHandlers[_key];
         _index = list.size();
-        list.push_back(std::move(handler));
+        list.push_back(std::make_shared<SignalHandler>(std::move(handler)));
 
         if (list.size() == 1)
             AddMatchRule();
@@ -451,7 +488,10 @@ namespace JappeStudios::JappeOS::JappeOSCore
             return;
 
         auto& list = it->second;
-        list[_index] = nullptr;
+
+        // Invalidate snapshots held by an in-progress dispatch as well.
+        *list[_index] = nullptr;
+        list[_index].reset();
 
         if (std::all_of(list.begin(), list.end(),
                         [](auto& f){ return !f; }))

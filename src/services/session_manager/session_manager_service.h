@@ -21,6 +21,7 @@
 
 #include "../service.h"
 #include "../../logger.h"
+#include "../../utils/dbus_peer.h"
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 {
@@ -46,6 +47,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::string        result;
         bool               installerLaunchScheduled = false;
         bool               installerStarted = false;
+        guint              installerSource = 0;
+        std::shared_ptr<Utils::DBusPeer> manager;
+        ObjectPath         unitPath;
+        bool               starting = true;
+        std::vector<std::string> startJobs;
     };
 
     class SessionManagerService : public Service
@@ -74,16 +80,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     private:
         Object _object;
         Interface& _iface;
-        std::unique_ptr<SignalSubscription> _subUnitNew;
-        std::unique_ptr<SignalSubscription> _subMainPIDChanged;
-        std::unique_ptr<SignalSubscription> _subActiveStateChanged;
-        std::unique_ptr<SignalSubscription> _subSubstateChanged;
-        std::unique_ptr<SignalSubscription> _subResultChanged;
-
         std::map<std::string, pam_handle_t*> _activePAMHandles;
         std::map<std::string, SessionInfo>   _sessions;
         std::map<std::string, std::vector<std::unique_ptr<SignalSubscription>>> _sessionSubscriptions;
-        std::vector<std::string>             _pendingUnits;
         std::string _greeterSessionID;
         bool        _isGreeterActive = false;
         bool        _isLiveEnvironment;
@@ -107,7 +106,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                            std::string& outSeat,
                            bool isLoginSession = false,
                            const char* pamServiceOverride = nullptr);
-        void StopSession(const std::string& sessionId);
+        void StopSession(std::string sessionId);
         bool TryAutologinSession();
 
         void AuthenticateAndOpenPAMSession(const std::string& service,
@@ -115,31 +114,28 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                            const std::string& password,
                                            int& outControlFd,
                                            pid_t& outChildPid);
+        void ConnectUserManager(const std::string& sessionId);
+        void RefreshSessionState(const std::string& sessionId);
+        void HandleSessionJobRemoved(const std::string& sessionId, const Message& message);
         void SubscribeToSessionSignals(const std::string& sessionId, const std::string& unitName);
         void SpawnUserSessionProcesses(bool isLoginSession,
                                        const std::string& username,
                                        const std::string& sessionId,
                                        const std::string& seat,
-                                       std::string& outServiceName) const;
+                                       std::string& outServiceName);
         void StartInstallerForSession(const SessionInfo& session) const; // <-- TODO: In the future, start from installer service, by listening to session service
         void ActivateLogindSession(const std::string& sessionId, const std::string& seat) const;
         void TerminateUserSessionProcesses(const std::string& sessionId);
         void TerminatePAMForSession(SessionInfo& session) const;
 
-        //void HandleSessionStop();
-        void HandleUnitNew(const Message& msg); // <-- TODO: Replase with UnitStarted
         void HandleSessionMainPIDChanged(const std::string& sessionId, pid_t newPID);
         void HandleSessionActiveStateChanged(const std::string& sessionId, const std::string& activeState);
-        void HandleSessionResultChanged(const std::string& sessionId, const std::string& result);
         void EvaluateSessionState(const SessionInfo& session);
 
         [[nodiscard]] bool IsGreeter(uid_t callerUid) const;
-        [[nodiscard]] std::string QueryLogindSessionForUid(uid_t uid, ObjectPath& outObjectPath) const noexcept;
+        [[nodiscard]] std::string QueryLogindSessionForPid(pid_t pid, ObjectPath& outObjectPath) const noexcept;
         [[nodiscard]] std::string QueryLogindSeatForSession(const std::string& sessionId,
                                                             const ObjectPath& sessionObjectPath) const noexcept;
-        pid_t GetUnitMainPID(const std::string& unitName) const;
-        bool TryGetSessionIdByUnitName(const std::string& unitName, std::string& outSessionId);
-
 
     private:
         static JappeOSCore::Logger& Log()

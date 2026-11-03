@@ -1283,6 +1283,16 @@ namespace JappeStudios::JappeOS::JappeOSCore
         explicit Connection(DBusBusType busType);
 
         /**
+         * @brief Creates a connection to a private peer.
+         *
+         * No bus Hello or AddMatch calls are made; subscriptions filter locally.
+         *
+         * @param peerAddress Address of the peer
+         * @throws DBusException if connection fails
+         */
+        explicit Connection(const std::string& peerAddress);
+
+        /**
          * @brief Creates a connection object from a raw DBusConnection pointer.
          *
          * Takes ownership of the DBusConnection pointer. The caller must not
@@ -1423,7 +1433,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         [[nodiscard]] std::optional<Message> PopMessage() const;
 
     private:
-        using HandlerList = std::vector<SignalHandler>;
+        using HandlerList = std::vector<std::shared_ptr<SignalHandler>>;
 
         struct SignalKey
         {
@@ -1465,6 +1475,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
     private:
         DBusConnection* _conn;
+        bool _peer = false;
         std::unordered_map<ObjectPath, Object*, ObjectPathHash> _objectRegistry;
         std::unordered_map<
             SignalKey,

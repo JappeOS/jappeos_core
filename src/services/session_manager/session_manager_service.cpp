@@ -28,6 +28,7 @@
 #include <linux/vt.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 
 #include "../account_manager/account_manager_service.h"
 #include "../installer/installer_service.h"
@@ -48,14 +49,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         _iface.RegisterMethod("CreateSession", [&](const auto& m) { OnCreateSession(m); });
         _iface.RegisterMethod("StopSession",   [&](const auto& m) { OnStopSession(m); });
         _iface.RegisterMethod("ListSessions",  [&](const auto& m) { OnListSessions(m); });
-
-        _subUnitNew = std::make_unique<SignalSubscription>(_conn->SubscribeSignal(
-            "org.freedesktop.systemd1",
-            ObjectPath("/org/freedesktop/systemd1"),
-            InterfaceName("org.freedesktop.systemd1.Manager"),
-            "UnitNew",
-            [&](const Message& msg) { HandleUnitNew(msg); }
-        ));
 
         _isLiveEnvironment = OsUtils::IsLiveOrInstallationEnvironment();
         g_idle_add(
@@ -111,9 +104,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         _activePAMHandles.clear();
+        for (auto& [id, session] : _sessions)
+            if (session.installerSource)
+                g_source_remove(session.installerSource);
+        _sessionSubscriptions.clear();
         _sessions.clear();
         _greeterSessionID = {};
-        _pendingUnits.clear();
         _isGreeterActive = false;
     }
 
@@ -436,10 +432,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         // --- 3) Session ID ---
         ObjectPath objectPath;
-        const std::string sessionId = QueryLogindSessionForUid(pwd->pw_uid, objectPath);
+        const std::string sessionId = QueryLogindSessionForPid(leaderPid, objectPath);
         if (sessionId.empty())
         {
-            Log().Err("No logind session found for user UID: " + std::to_string(pwd->pw_uid));
+            Log().Err("No logind session found for user UID: " + std::to_string(uid));
             throw DBusException(DBUS_ERROR_FAILED, "Could not determine session ID");
         }
 
@@ -457,31 +453,39 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             seat = "seat0"; // safe fallback
         }
 
-        // --- 5) Spawn compositor/desktop ---
-        std::string scopeName;
-        SpawnUserSessionProcesses(isLoginSession, username, sessionId, seat, scopeName);
-        ScopeGuard guard1([&]{ TerminateUserSessionProcesses(sessionId); });
-        if (scopeName.empty())
-        {
-            Log().Err("SpawnUserSessionProcesses returned empty scopeName for: " + username);
-            throw DBusException(DBUS_ERROR_FAILED, "Invalid session scope");
-        }
-
-        // --- 6) Insert into session map ---
-        _sessions[sessionId] =
-        {
-            sessionId,
-            username,
-            scopeName,
-            uid,
-            leaderPid,
-            controlFd,
-            seat,
-            {}
+        // --- 5) Register session ---
+        // Register before starting units so failures can unwind both services and PAM.
+        _sessions[sessionId] = {
+            .id = sessionId,
+            .username = username,
+            .scopeName = "session@" + sessionId + ".service",
+            .uid = uid,
+            .leaderPid = leaderPid,
+            .controlFd = controlFd,
+            .seat = seat,
+            .privilegedClientProcesses = {}
         };
 
-        _pendingUnits.push_back(scopeName);
-        controlFd = -1;
+        ScopeGuard guard1([&]
+        {
+            try
+            {
+                TerminateUserSessionProcesses(sessionId);
+            }
+            catch (const std::exception& e)
+            {
+                Log().Warn(e.what());
+            }
+
+            _sessionSubscriptions.erase(sessionId);
+            _sessions.erase(sessionId);
+        });
+
+        // --- 6) Connect user manager and spawn processes ---
+        ConnectUserManager(sessionId);
+        std::string serviceName;
+        SpawnUserSessionProcesses(isLoginSession, username, sessionId, seat, serviceName);
+        SubscribeToSessionSignals(sessionId, serviceName);
 
         // --- 7) Schedule VT switch and login session stop ---
         try
@@ -513,62 +517,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             }
         }
 
-        /*struct ScheduleData
-        {
-            SessionManagerServiceNew* self;
-            std::string username;
-            std::string sessionId;
-            std::string seat;
-            bool isLoginSession;
-        };
-        auto* userData = new ScheduleData{this, username, sessionId, seat, isLoginSession};
-        g_timeout_add_once(
-            USE_SESSION_MANAGER_CREATE_VT_SWITCH_DELAY ? 1000 : 0,
-            [](const gpointer d) {
-                const std::unique_ptr<ScheduleData> data(static_cast<ScheduleData*>(d));
-                if (!data || !data->self) return;
-
-                try
-                {
-                    data->self->ActivateLogindSession(data->sessionId, data->seat);
-                }
-                catch (const std::exception& e)
-                {
-                    Log().Err(std::format(
-                        "Failed to activate logind session for user `{}`: {}",
-                        data->username,
-                        e.what()
-                    ));
-                }
-
-                if (data->isLoginSession) return;
-
-                try
-                {
-                    data->self->StopLoginSession();
-                }
-                catch (const std::exception& e)
-                {
-                    Log().Err(std::format(
-                        "Failed to stop login session for user `{}`: {}",
-                        data->username,
-                        e.what()
-                    ));
-                }
-            },
-            userData
-        );*/
-
         // --- 8) Return data ---
         outSessionId = sessionId;
         outUid = uid;
         outSeat = seat;
         Log().Info("Created session `" + sessionId + "` for user `" + username + "`.");
+        controlFd = -1; // Ownership passes to SessionInfo only after successful startup.
         guard0.Dismiss();
         guard1.Dismiss();
     }
 
-    void SessionManagerService::StopSession(const std::string& sessionId)
+    void SessionManagerService::StopSession(std::string sessionId)
     {
         const auto it = _sessions.find(sessionId);
         if (it == _sessions.end())
@@ -580,6 +539,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
 
         auto& session = it->second;
+        const auto username = session.username;
+        if (session.installerSource)
+            g_source_remove(session.installerSource);
+        session.installerSource = 0;
         const bool isLoginSession = it->first == _greeterSessionID;
 
         try
@@ -609,8 +572,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             ));
         }
 
-        _sessions.erase(sessionId);
         _sessionSubscriptions.erase(sessionId);
+        _sessions.erase(sessionId);
 
         // TODO: Switch to other session or greeter when logged out, if there are no sessions, just create a login session
         if (!isLoginSession && !_isGreeterActive)
@@ -637,7 +600,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             }
         }
 
-        Log().Info("Stopped session `" + sessionId + "` of user `" + session.username + "`.");
+        Log().Info("Stopped session `" + sessionId + "` of user `" + username + "`.");
     }
 
     bool SessionManagerService::TryAutologinSession()
@@ -848,74 +811,145 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         explicit_bzero(convctx.password.data(), convctx.password.size());
     }
 
-    void SessionManagerService::SubscribeToSessionSignals(const std::string& sessionId, const std::string& unitName)
+    void SessionManagerService::ConnectUserManager(const std::string& sessionId)
     {
-        if (_sessionSubscriptions.contains(sessionId))
-        {
-            Log().Notice(std::format("SubscribeToSessionSignals called on session `{}` more than once.", sessionId));
-            return;
-        }
+        auto& session = _sessions.at(sessionId);
 
-        if (!_sessions.contains(sessionId))
-        {
-            Log().Warn(std::format(
-                "SubscribeToSessionSignals called on session `{}`, but the session does not exist.",
-                sessionId
-            ));
-            return;
-        }
+        // pam_systemd starts user@UID.service before pam_open_session returns.
+        // Use the manager's authenticated private peer socket: a user's session
+        // bus need not accept connections from root.
+        session.manager = std::make_shared<Utils::DBusPeer>(
+            "unix:path=/run/user/" + std::to_string(session.uid) + "/systemd/private");
 
-        auto msg = Message::CreateMethodCall(
+        auto& connection = session.manager->GetConnection();
+        auto& subscriptions = _sessionSubscriptions[sessionId];
+
+        subscriptions.push_back(std::make_unique<SignalSubscription>(connection.SubscribeSignal(
             "org.freedesktop.systemd1",
             ObjectPath("/org/freedesktop/systemd1"),
             InterfaceName("org.freedesktop.systemd1.Manager"),
-            "GetUnit"
-        );
+            "JobRemoved",
+            [this, sessionId](const Message& message) { HandleSessionJobRemoved(sessionId, message); }
+        )));
 
-        msg.SetArgs(unitName);
-        const auto reply = msg.SendWithReply(*_conn);
-        auto [unit] = reply.GetArgs<ObjectPath>();
+        subscriptions.push_back(std::make_unique<SignalSubscription>(connection.SubscribeSignal(
+            "org.freedesktop.DBus.Local",
+            ObjectPath("/org/freedesktop/DBus/Local"),
+            InterfaceName("org.freedesktop.DBus.Local"),
+            "Disconnected",
+            [this, sessionId](const Message&)
+            {
+                if (!_sessions.contains(sessionId))
+                    return;
+                Log().Err("User manager disconnected for session " + sessionId);
+                StopSession(sessionId);
+            }
+        )));
 
-        auto& vec = _sessionSubscriptions[sessionId];
-
-        auto serviceProxy = Proxy(
-            *_conn,
+        const auto subscribe = Message::CreateMethodCall(
             "org.freedesktop.systemd1",
-            unit,
-            InterfaceName("org.freedesktop.systemd1.Service")
-        );
+            ObjectPath("/org/freedesktop/systemd1"),
+            InterfaceName("org.freedesktop.systemd1.Manager"),
+            "Subscribe");
 
-        auto unitProxy = Proxy(
-            *_conn,
+        subscribe.SendWithReplyIgnore(connection);
+    }
+
+    void SessionManagerService::RefreshSessionState(const std::string& sessionId)
+    {
+        const auto it = _sessions.find(sessionId);
+        if (it == _sessions.end())
+            return;
+
+        auto& session = it->second;
+        auto& connection = session.manager->GetConnection();
+
+        const Proxy service(
+            connection,
             "org.freedesktop.systemd1",
-            unit,
-            InterfaceName("org.freedesktop.systemd1.Unit")
-        );
+            session.unitPath,
+            InterfaceName("org.freedesktop.systemd1.Service"));
 
-        HandleSessionMainPIDChanged(sessionId, serviceProxy.GetProperty<uint32_t>("MainPID"));
-        vec.push_back(std::make_unique<SignalSubscription>(serviceProxy.SubscribePropertyChanged<uint32_t>(
-            "MainPID",
-            [&](const uint32_t& val) { HandleSessionMainPIDChanged(sessionId, val); }
+        const Proxy unit(
+            connection,
+            "org.freedesktop.systemd1",
+            session.unitPath,
+            InterfaceName("org.freedesktop.systemd1.Unit"));
+
+        // Refresh the snapshot, including invalidated properties, instead of
+        // replaying old startup signals queued during synchronous method calls.
+        // Read only the properties we consume. systemd also exposes complex
+        // service properties that this D-Bus wrapper does not deserialize.
+        const auto result = service.GetProperty<std::string>("Result");
+        const auto mainPid = service.GetProperty<uint32_t>("MainPID");
+        const auto state = unit.GetProperty<std::string>("ActiveState");
+        session.result = result;
+
+        HandleSessionMainPIDChanged(sessionId, mainPid);
+        HandleSessionActiveStateChanged(sessionId, state);
+    }
+
+    void SessionManagerService::HandleSessionJobRemoved(const std::string& sessionId, const Message& message)
+    {
+        const auto [id, path, unit, result]
+                = message.GetArgs<uint32_t, ObjectPath, std::string, std::string>();
+
+        const auto it = _sessions.find(sessionId);
+        if (it == _sessions.end())
+            return;
+
+        auto& session = it->second;
+        const auto job = std::ranges::find(session.startJobs, path.ToString());
+        if (job == session.startJobs.end())
+            return;
+
+        session.startJobs.erase(job);
+
+        if (result != "done")
+        {
+            Log().Err("Failed to start " + unit + ": " + result);
+            StopSession(sessionId);
+            return;
+        }
+
+        if (session.startJobs.empty())
+        {
+            session.starting = false;
+            RefreshSessionState(sessionId);
+        }
+    }
+
+    void SessionManagerService::SubscribeToSessionSignals(const std::string& sessionId, const std::string& unitName)
+    {
+        auto& session = _sessions.at(sessionId);
+        auto& connection = session.manager->GetConnection();
+
+        auto message = Message::CreateMethodCall(
+            "org.freedesktop.systemd1",
+            ObjectPath("/org/freedesktop/systemd1"),
+            InterfaceName("org.freedesktop.systemd1.Manager"),
+            "GetUnit");
+
+        message.SetArgs(unitName);
+        const auto reply = message.SendWithReply(connection);
+
+        session.unitPath = std::get<0>(reply.GetArgs<ObjectPath>());
+        _sessionSubscriptions[sessionId].push_back(std::make_unique<SignalSubscription>(connection.SubscribeSignal(
+            "org.freedesktop.systemd1",
+            session.unitPath,
+            InterfaceName("org.freedesktop.DBus.Properties"),
+            "PropertiesChanged",
+            [this, sessionId](const Message&) { RefreshSessionState(sessionId); }
         )));
 
-        HandleSessionActiveStateChanged(sessionId, unitProxy.GetProperty<std::string>("ActiveState"));
-        vec.push_back(std::make_unique<SignalSubscription>(unitProxy.SubscribePropertyChanged<std::string>(
-            "ActiveState",
-            [&](const std::string& val) { HandleSessionActiveStateChanged(sessionId, val); }
-        )));
-
-        HandleSessionResultChanged(sessionId, serviceProxy.GetProperty<std::string>("Result"));
-        vec.push_back(std::make_unique<SignalSubscription>(serviceProxy.SubscribePropertyChanged<std::string>(
-            "Result",
-            [&](const std::string& val) { HandleSessionResultChanged(sessionId, val); }
-        )));
+        RefreshSessionState(sessionId);
     }
 
     void SessionManagerService::SpawnUserSessionProcesses(const bool isLoginSession,
                                                           const std::string& username,
                                                           const std::string& sessionId,
                                                           const std::string& seat,
-                                                          std::string& outServiceName) const
+                                                          std::string& outServiceName)
     {
         const auto pwd = getpwnam(username.c_str());
         if (!pwd)
@@ -936,7 +970,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         const std::string envRuntimeDir = "XDG_RUNTIME_DIR=" + runtimeDir;
         const std::string envSessionBusAddr = std::format("DBUS_SESSION_BUS_ADDRESS=unix:path={}/bus", runtimeDir);
         const std::string envSeat = "XDG_SEAT=" + seat;
-        const std::string envSessionClass = "XDG_SESSION_CLASS=user";
+        const std::string envSessionClass = isLoginSession ? "XDG_SESSION_CLASS=greeter" : "XDG_SESSION_CLASS=user";
 
         // Spawn the compositor, a.k.a the main process of the session:
 
@@ -949,7 +983,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         properties.emplace_back("Description", DBusVariant::make<std::string>("Desktop Session"));
         properties.emplace_back("Slice",       DBusVariant::make<std::string>("session.slice"));
-        properties.emplace_back("User",        DBusVariant::make<std::string>(std::string(username)));
 
         const std::string dePath = isLoginSession ? JOS_GREETER_BINARY : JOS_DESKTOP_BINARY;
         auto lib = dePath.substr(0, dePath.find_last_of('/')) + "/lib";
@@ -959,6 +992,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             envSessionBusAddr,
             envSeat,
             envSessionClass,
+            "XDG_SESSION_ID=" + sessionId,
             "XDG_SESSION_TYPE=wayland",
             "XDG_CURRENT_DESKTOP=" + std::string(JOS_DESKTOP_NAME),
             "ZENITH_MULTI_MONITOR_MODE=extend",
@@ -987,7 +1021,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             std::vector<std::tuple<std::string, std::vector<std::tuple<std::string, DBusVariant>>>>{} // aux units
         );
 
-        msg1.SendWithReplyIgnore(*_conn);
+        const auto reply1 = msg1.SendWithReply(_sessions.at(sessionId).manager->GetConnection());
+        _sessions.at(sessionId).startJobs.push_back(std::get<0>(reply1.GetArgs<ObjectPath>()).ToString());
         properties.clear();
         execStart.clear();
 
@@ -1002,12 +1037,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         properties.emplace_back("Description", DBusVariant::make<std::string>("Session Daemon"));
         properties.emplace_back("Slice",       DBusVariant::make<std::string>("session.slice"));
-        properties.emplace_back("User",        DBusVariant::make<std::string>(std::string(username)));
         properties.emplace_back("Environment", DBusVariant::make<std::vector<std::string>>({
             envRuntimeDir,
             envSessionBusAddr,
             envSeat,
             envSessionClass,
+            "XDG_SESSION_ID=" + sessionId,
         }));
         properties.emplace_back("PartOf", DBusVariant::make<std::vector<std::string>>({
             serviceName
@@ -1038,7 +1073,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             std::vector<std::tuple<std::string, std::vector<std::tuple<std::string, DBusVariant>>>>{} // aux units
         );
 
-        msg2.SendWithReplyIgnore(*_conn);
+        const auto reply2 = msg2.SendWithReply(_sessions.at(sessionId).manager->GetConnection());
+        _sessions.at(sessionId).startJobs.push_back(std::get<0>(reply2.GetArgs<ObjectPath>()).ToString());
     }
 
     void SessionManagerService::StartInstallerForSession(const SessionInfo& session) const
@@ -1059,7 +1095,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         properties.emplace_back("Description", DBusVariant::make<std::string>("JappeOS Installer"));
         properties.emplace_back("Slice",       DBusVariant::make<std::string>("session.slice"));
-        properties.emplace_back("User",        DBusVariant::make<std::string>(std::string(session.username)));
         properties.emplace_back("PartOf",      DBusVariant::make<std::vector<std::string>>({
             session.scopeName
         }));
@@ -1071,6 +1106,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             std::format("DBUS_SESSION_BUS_ADDRESS=unix:path={}/bus", runtimeDir),
             "XDG_SEAT=" + session.seat,
             "XDG_SESSION_CLASS=user",
+            "XDG_SESSION_ID=" + session.id,
             "XDG_SESSION_TYPE=wayland",
             "XDG_CURRENT_DESKTOP=" + std::string(JOS_DESKTOP_NAME),
             "WAYLAND_DISPLAY=wayland-0",
@@ -1098,7 +1134,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             std::vector<std::tuple<std::string, std::vector<std::tuple<std::string, DBusVariant>>>>{}
         );
 
-        msg.SendWithReplyIgnore(*_conn);
+        msg.SendWithReplyIgnore(session.manager->GetConnection());
         Log().Info(std::format("Started installer for live session `{}`.", session.id));
     }
 
@@ -1124,23 +1160,32 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
     void SessionManagerService::TerminateUserSessionProcesses(const std::string& sessionId)
     {
         const auto it = _sessions.find(sessionId);
-        if (it == _sessions.end() || it->second.scopeName.empty())
-        {
-            Log().Warn("TerminateUserSessionProcesses called for unknown or empty session: " + sessionId);
+        if (it == _sessions.end() || !it->second.manager)
             return;
+
+        const auto& connection = it->second.manager->GetConnection();
+
+        // Explicitly stop all units, including a partially completed startup.
+        // Keep trying if one unit never existed or has already been collected.
+        for (const auto& name : {"jappeos-installer@" + sessionId + ".service",
+                                 "session-daemon@" + sessionId + ".service", it->second.scopeName})
+        {
+            try
+            {
+                auto message = Message::CreateMethodCall(
+                    "org.freedesktop.systemd1",
+                    ObjectPath("/org/freedesktop/systemd1"),
+                    InterfaceName("org.freedesktop.systemd1.Manager"),
+                    "StopUnit");
+
+                message.SetArgs(name, std::string("replace"));
+                message.SendWithReplyIgnore(connection);
+            }
+            catch (const DBusException& e)
+            {
+                Log().Debug("Could not stop " + name + ": " + e.what());
+            }
         }
-
-        const std::string& scope = it->second.scopeName;
-        auto msg = Message::CreateMethodCall(
-            "org.freedesktop.systemd1",
-            ObjectPath("/org/freedesktop/systemd1"),
-            InterfaceName("org.freedesktop.systemd1.Manager"),
-            "StopUnit"
-        );
-
-        msg.SetArgs(scope, std::string("fail"));
-        msg.SendWithReplyIgnore(*_conn);
-        Log().Debug("Successfully stopped processes for session `" + sessionId + "` (scope: " + scope + ")");
     }
 
     void SessionManagerService::TerminatePAMForSession(SessionInfo& session) const
@@ -1184,87 +1229,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         }
     }
 
-    /*void SessionManagerService::HandleUnitNew(const Message& msg)
-    {
-        const auto [id, jobPath, unitName, result]
-                = msg.GetArgs<uint32_t, ObjectPath, std::string, std::string>();
-
-        const auto it = std::ranges::find(_pendingUnits, unitName);
-        if (it == _pendingUnits.end()) return;
-        _pendingUnits.erase(it);
-
-        try
-        {
-            if (const pid_t pid = GetUnitMainPID(unitName); pid > 0)
-            {
-                Log().Debug("Got MainPID for " + unitName + ": " + std::to_string(pid));
-
-                if (std::string sessionId; TryGetSessionIdByUnitName(unitName, sessionId))
-                {
-                    const auto it = _sessions.find(sessionId);
-                    if (it != _sessions.end())
-                    {
-                        auto& session = it->second;
-                        session.privilegedClientProcesses.push_back(pid);
-                    }
-                    else
-                    {
-                        Log().Err("Failed to get session info by unit name: " + unitName);
-                    }
-                }
-                else
-                {
-                    Log().Err("Failed to get session info by unit name: " + unitName);
-                }
-            }
-            else
-            {
-                Log().Warn("Failed to get MainPID for " + unitName);
-            }
-        }
-        catch (const std::exception& e)
-        {
-            Log().Warn("Failed to get MainPID for `" + unitName + "` because of exception: " + e.what());
-        }
-    }*/
-
-    void SessionManagerService::HandleUnitNew(const Message& msg)
-    {
-        const auto [name, unit] = msg.GetArgs<std::string, ObjectPath>();
-
-        const auto it = std::ranges::find(_pendingUnits, name);
-        if (it == _pendingUnits.end()) return;
-        _pendingUnits.erase(it);
-
-        try
-        {
-            if (std::string sessionId; TryGetSessionIdByUnitName(name, sessionId))
-            {
-                const auto it = _sessions.find(sessionId);
-                if (it != _sessions.end())
-                {
-                    SubscribeToSessionSignals(it->second.id, name);
-                }
-                else
-                {
-                    Log().Err("Failed to get session info by unit name: " + name);
-                }
-            }
-            else
-            {
-                Log().Err("Failed to get session info by unit name: " + name);
-            }
-        }
-        catch (const std::exception& e)
-        {
-            Log().Err(std::format(
-                "Failed to subscribe session to signals from unit `{}` because of exception: {}",
-                unit.ToString(),
-                e.what()
-            ));
-        }
-    }
-
     void SessionManagerService::HandleSessionMainPIDChanged(const std::string& sessionId, const pid_t newPID)
     {
         const auto it = _sessions.find(sessionId);
@@ -1273,7 +1237,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         auto& vec = it->second.privilegedClientProcesses;
         vec.clear();
-        if (newPID > 0)
+
+        // The user manager is controlled by its user. Never allow its MainPID
+        // property to grant privileges to a process owned by another account.
+        struct stat status{};
+        if (newPID > 0 && stat(("/proc/" + std::to_string(newPID)).c_str(), &status) == 0
+            && status.st_uid == it->second.uid)
             vec.push_back(newPID);
     }
 
@@ -1286,7 +1255,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         Log().Debug("Active state: " + activeState);
         it->second.activeState = activeState;
 
-        if (_isLiveEnvironment
+        if (!it->second.starting && _isLiveEnvironment
             && activeState == "active"
             && it->second.username == Installer::InstallerService::JOS_LIVE_USER_NAME
             && !it->second.installerLaunchScheduled
@@ -1301,13 +1270,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             };
 
             auto* data = new InstallerLaunchData{this, sessionId};
-            g_timeout_add(
+            it->second.installerSource = g_timeout_add_full(
+                G_PRIORITY_DEFAULT,
                 5000,
                 [](gpointer userData) -> gboolean
                 {
-                    const std::unique_ptr<InstallerLaunchData> data(
-                        static_cast<InstallerLaunchData*>(userData)
-                    );
+                    const auto* data = static_cast<InstallerLaunchData*>(userData);
                     if (!data || !data->self)
                         return G_SOURCE_REMOVE;
 
@@ -1316,6 +1284,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                         return G_SOURCE_REMOVE;
 
                     auto& session = sessionIt->second;
+                    session.installerSource = 0;
                     if (session.activeState != "active" || session.installerStarted)
                         return G_SOURCE_REMOVE;
 
@@ -1335,26 +1304,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
                     return G_SOURCE_REMOVE;
                 },
-                data
+                data,
+                [](gpointer value) { delete static_cast<InstallerLaunchData*>(value); }
             );
         }
 
         EvaluateSessionState(it->second);
     }
 
-    void SessionManagerService::HandleSessionResultChanged(const std::string& sessionId, const std::string& result)
-    {
-        const auto it = _sessions.find(sessionId);
-        if (it == _sessions.end())
-            return;
-
-        Log().Debug("Result: " + result);
-        it->second.result = result;
-        EvaluateSessionState(it->second);
-    }
-
     void SessionManagerService::EvaluateSessionState(const SessionInfo& session)
     {
+        if (session.starting)
+            return;
+
         if (session.activeState == "failed" || (session.result != "success" && !session.result.empty()))
         {
             Log().Warn(std::format(
@@ -1362,6 +1324,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 session.id
             ));
             StopSession(session.id);
+            return;
         }
 
         if (session.activeState == "inactive" && session.result == "success")
@@ -1384,65 +1347,33 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         return false;
     }
 
-    std::string SessionManagerService::QueryLogindSessionForUid(const uid_t uid, ObjectPath& outObjectPath) const noexcept
+    std::string SessionManagerService::QueryLogindSessionForPid(const pid_t pid, ObjectPath& outObjectPath) const noexcept
     {
         try
         {
-            const auto msg = Message::CreateMethodCall(
+            auto message = Message::CreateMethodCall(
                 "org.freedesktop.login1",
                 ObjectPath("/org/freedesktop/login1"),
                 InterfaceName("org.freedesktop.login1.Manager"),
-                "ListSessions"
-            );
+                "GetSessionByPID");
 
-            const auto reply = msg.SendWithReply(*_conn);
-            const auto [sessions] = reply.GetArgs<
-                std::vector<
-                    std::tuple<
-                        std::string,
-                        uint32_t,
-                        std::string,
-                        std::string,
-                        ObjectPath
-                    >
-                >
-            >();
+            // The PAM helper is the actual logind session leader, unlike apps
+            // subsequently launched under user@UID.service.
+            message.SetArgs(static_cast<uint32_t>(pid));
+            const auto reply = message.SendWithReply(*_conn);
+            outObjectPath = std::get<0>(reply.GetArgs<ObjectPath>());
 
-            if (sessions.empty())
-                throw std::runtime_error("No sessions");
+            const Proxy session(
+                *_conn,
+                "org.freedesktop.login1",
+                outObjectPath,
+                InterfaceName("org.freedesktop.login1.Session"));
 
-            std::string foundSessionId;
-            for (const auto& session : sessions)
-            {
-                const auto [
-                    sessionId,
-                    sessionUid,
-                    username,
-                    seatId,
-                    objPath
-                ] = session;
-
-                if (objPath == ObjectPath())
-                    Log().Err("Invalid object path");
-
-                if (sessionUid == uid && !sessionId.empty() && !seatId.empty())
-                {
-                    foundSessionId = sessionId;
-                    outObjectPath = objPath;
-                    break;
-                }
-            }
-
-            if (!foundSessionId.empty())
-                Log().Debug("Found session " + foundSessionId + " for UID " + std::to_string(uid));
-            else
-                Log().Notice("No session found for UID " + std::to_string(uid));
-
-            return foundSessionId;
+            return session.GetProperty<std::string>("Id");
         }
         catch (const std::exception& e)
         {
-            Log().Err("QueryLogindSessionForUid error: " + std::string(e.what()));
+            Log().Err("QueryLogindSessionForPid error: " + std::string(e.what()));
             return "";
         }
     }
@@ -1481,53 +1412,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             Log().Warn("QueryLogindSeatForSession defaulting to seat0, because of error: " + std::string(e.what()));
             return "seat0";
         }
-    }
-
-    pid_t SessionManagerService::GetUnitMainPID(const std::string& unitName) const
-    {
-        if (unitName.empty())
-            throw std::runtime_error("Empty unitName in GetUnitMainPID");
-
-        auto msg = Message::CreateMethodCall(
-            "org.freedesktop.systemd1",
-            ObjectPath("/org/freedesktop/systemd1"),
-            InterfaceName("org.freedesktop.systemd1.Manager"),
-            "GetUnit"
-        );
-
-        msg.SetArgs(unitName);
-        const auto reply = msg.SendWithReply(*_conn);
-        const auto [unitPath] = reply.GetArgs<ObjectPath>();
-
-        if (unitPath == ObjectPath())
-            throw std::runtime_error("Invalid unit path in GetUnitMainPID");
-
-        auto msg1 = Message::CreateMethodCall(
-            "org.freedesktop.systemd1",
-            unitPath,
-            InterfaceName("org.freedesktop.DBus.Properties"),
-            "Get"
-        );
-
-        msg1.SetArgs(std::string("org.freedesktop.systemd1.Service"), std::string("MainPID"));
-        const auto reply1 = msg1.SendWithReply(*_conn);
-        const auto [mainPidV] = reply1.GetArgs<DBusVariant>();
-        const auto mainPid = mainPidV.get<uint32_t>();
-        return static_cast<pid_t>(mainPid);
-    }
-
-    bool SessionManagerService::TryGetSessionIdByUnitName(const std::string& unitName, std::string& outSessionId)
-    {
-        return std::ranges::any_of(_sessions, [&](auto const& e)
-        {
-            if (e.second.scopeName == unitName)
-            {
-                outSessionId = e.first;
-                return true;
-            }
-
-            return false;
-        });
     }
 
     std::string SessionManagerService::GenerateFallbackSessionId()

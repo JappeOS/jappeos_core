@@ -48,6 +48,8 @@ set(JAPPEOS_COMMON_SOURCES
 )
 
 set(JAPPEOS_SYSTEM_SOURCES
+        src/utils/dbus_peer.cpp
+        src/utils/dbus_peer.h
         src/utils/scope_guard.h
         src/utils/command_runner.cpp
         src/utils/command_runner.h
