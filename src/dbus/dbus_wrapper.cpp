@@ -19,6 +19,7 @@
 #include "dbus_wrapper.h"
 
 #include <format>
+#include <chrono>
 
 namespace JappeStudios::JappeOS::JappeOSCore
 {
@@ -231,6 +232,32 @@ namespace JappeStudios::JappeOS::JappeOSCore
             throw DBusException(DBUS_ERROR_FAILED, message);
         }
         dbus_connection_set_exit_on_disconnect(_conn, false);
+
+        // open_private only opens the transport; authentication is still pending.
+        // Complete it before a caller queues its first synchronous method call.
+        // Otherwise the first call can time out depending on timing.
+        try
+        {
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(DBUS_DEFAULT_SAFE_TIMEOUT);
+
+            while (!dbus_connection_get_is_authenticated(_conn))
+            {
+                const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now()).count();
+                if (remaining <= 0)
+                    throw DBusException(DBUS_ERROR_TIMEOUT, "Timed out authenticating D-Bus peer " + peerAddress);
+                if (!dbus_connection_read_write(_conn, static_cast<int>(std::min<int64_t>(remaining, 50))))
+                    throw DBusException(DBUS_ERROR_DISCONNECTED, "D-Bus peer disconnected during authentication: " + peerAddress);
+            }
+        }
+        catch (...)
+        {
+            dbus_connection_close(_conn);
+            dbus_connection_unref(_conn);
+            _conn = nullptr;
+            throw;
+        }
     }
 
     Connection::Connection(DBusConnection* conn)
@@ -569,10 +596,20 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
         if (dbus_error_is_set(&err))
         {
-            const auto errmsg = "Send failed: " + std::string(err.message ? err.message : "unknown");
+            const std::string code = err.name ? err.name : DBUS_ERROR_FAILED;
+
+            // Include routing details, never argument values (which may contain passwords).
+            const auto iface = GetInterface();
+            const auto path = GetPath();
+            const auto errmsg = std::format("Call {}.{} at {} failed: {}",
+                iface ? iface->ToString() : "", GetMember(),
+                path ? path->ToString() : "", err.message ? err.message : "unknown");
+
             dbus_error_free(&err);
-            if (reply) dbus_message_unref(reply);
-            throw DBusException(DBUS_ERROR_FAILED, errmsg);
+            if (reply)
+                dbus_message_unref(reply);
+
+            throw DBusException(code.c_str(), errmsg);
         }
 
         if (!reply)
