@@ -1285,6 +1285,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         /**
          * @brief Creates a connection to a private peer.
          *
+         * Completes authentication before returning, with a bounded timeout.
          * No bus Hello or AddMatch calls are made; subscriptions filter locally.
          *
          * @param peerAddress Address of the peer
