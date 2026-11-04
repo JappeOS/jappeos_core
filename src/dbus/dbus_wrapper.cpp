@@ -234,8 +234,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
         dbus_connection_set_exit_on_disconnect(_conn, false);
 
         // open_private only opens the transport; authentication is still pending.
-        // Complete it before a caller queues its first synchronous method call.
-        // Otherwise the first call can time out depending on timing.
+        // Finish the local authentication state with a bounded wait. DBusPeer
+        // additionally verifies remote readiness with a method round trip.
         try
         {
             const auto deadline = std::chrono::steady_clock::now() +
@@ -670,7 +670,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
                                       const std::string& method)
     {
         DBusMessage* msg = dbus_message_new_method_call(
-            busName.c_str(),
+            busName.empty() ? nullptr : busName.c_str(),
             path.ToString().c_str(),
             iface.ToString().c_str(),
             method.c_str()

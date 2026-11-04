@@ -851,13 +851,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             }
         )));
 
-        const auto subscribe = Message::CreateMethodCall(
-            "org.freedesktop.systemd1",
-            ObjectPath("/org/freedesktop/systemd1"),
-            InterfaceName("org.freedesktop.systemd1.Manager"),
-            "Subscribe");
-
-        subscribe.SendWithReplyIgnore(connection);
+        // NOTE: systemd subscribes private peer connections automatically. Subscribe
+        // is required only when using the manager through a message bus.
     }
 
     void SessionManagerService::RefreshSessionState(const std::string& sessionId)

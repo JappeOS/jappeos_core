@@ -1662,7 +1662,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
     public:
         /**
          * @brief Creates a method call message.
-         * @param busName Destination bus name
+         * @param busName Destination bus name, or empty for a direct peer call
          * @param path Object path
          * @param iface Interface name
          * @param method Method name

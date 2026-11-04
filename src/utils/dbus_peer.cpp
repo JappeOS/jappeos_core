@@ -17,11 +17,44 @@
  */
 
 #include "dbus_peer.h"
+#include <chrono>
 
 namespace JappeStudios::JappeOS::JappeOSCore::Utils
 {
     namespace
     {
+        void WaitUntilReady(const Connection& connection)
+        {
+            // Authentication alone is not a round-trip barrier. sd-bus can read
+            // BEGIN and the first method into its authentication buffer together;
+            // with sd-event that method can then wait for another socket event.
+            // Establish readiness using only the standard, side-effect-free Ping.
+            // Never apply these retries to application methods (e.g. StartTransientUnit).
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(DBUS_DEFAULT_SAFE_TIMEOUT);
+            for (;;)
+            {
+                const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now()).count();
+                if (remaining <= 0)
+                    throw DBusException(DBUS_ERROR_TIMEOUT, "Timed out waiting for D-Bus peer readiness");
+
+                // A fresh message gives each attempt its own reply serial, so a
+                // late reply to a previous Ping cannot complete the current call.
+                auto ping = Message::CreateMethodCall("", ObjectPath("/"),
+                    InterfaceName("org.freedesktop.DBus.Peer"), "Ping");
+                try
+                {
+                    ping.SendWithReplyIgnore(connection, static_cast<int>(std::min<int64_t>(remaining, 250)));
+                    return;
+                }
+                catch (const DBusException& error)
+                {
+                    if (error.GetCode() != DBUS_ERROR_NO_REPLY) throw;
+                }
+            }
+        }
+
         struct PeerSource
         {
             GSource source;
@@ -72,9 +105,10 @@ namespace JappeStudios::JappeOS::JappeOSCore::Utils
     }
 
     DBusPeer::DBusPeer(const std::string& address)
-        : _connection(std::make_shared<Connection>(address)),
-          _source(g_source_new(&functions, sizeof(PeerSource)))
+        : _connection(std::make_shared<Connection>(address))
     {
+        WaitUntilReady(*_connection);
+        _source = g_source_new(&functions, sizeof(PeerSource));
         auto* peer = reinterpret_cast<PeerSource*>(_source);
         peer->connection = new std::shared_ptr<Connection>(_connection);
         peer->poll.fd = _connection->GetUnixFd();

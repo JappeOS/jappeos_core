@@ -24,7 +24,8 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Utils
 {
-    // Owns a private D-Bus peer and dispatches it on the GLib main context.
+    // Authenticates and verifies readiness of a private D-Bus peer, then
+    // dispatches it on the GLib main context. Construction has bounded waits.
     // Destroy signal subscriptions before destroying this object.
     class DBusPeer
     {
@@ -37,6 +38,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Utils
 
     private:
         std::shared_ptr<Connection> _connection;
-        GSource* _source;
+        GSource* _source = nullptr;
     };
 }
