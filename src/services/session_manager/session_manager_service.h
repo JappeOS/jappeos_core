@@ -42,6 +42,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         pid_t              leaderPid;
         int                controlFd;
         std::string        seat;
+        int                vtNumber = 0;
         std::vector<pid_t> privilegedClientProcesses;
         std::string        activeState;
         std::string        result;
@@ -113,7 +114,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                            const std::string& username,
                                            const std::string& password,
                                            int& outControlFd,
-                                           pid_t& outChildPid);
+                                           pid_t& outChildPid,
+                                           int& outVTNumber);
         void ConnectUserManager(const std::string& sessionId);
         void RefreshSessionState(const std::string& sessionId);
         void HandleSessionJobRemoved(const std::string& sessionId, const Message& message);

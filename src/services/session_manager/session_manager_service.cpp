@@ -373,6 +373,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         // --- 2) PAM Authentication ---
         int controlFd = -1;
         pid_t leaderPid = 0;
+        int vtNumber = 0;
         auto cleanupPam = [&]()
         {
             // Always close the control FD if open
@@ -421,7 +422,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 username,
                 password,
                 controlFd,
-                leaderPid
+                leaderPid,
+                vtNumber
             );
         }
         catch (const std::exception& e)
@@ -463,6 +465,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             .leaderPid = leaderPid,
             .controlFd = controlFd,
             .seat = seat,
+            .vtNumber = vtNumber,
             .privilegedClientProcesses = {}
         };
 
@@ -666,7 +669,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                                               const std::string& username,
                                                               const std::string& password,
                                                               int& outControlFd,
-                                                              pid_t& outChildPid)
+                                                              pid_t& outChildPid,
+                                                              int& outVTNumber)
     {
         pam_conv conv;
         PamConversationCtx convctx{password};
@@ -807,6 +811,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         // Store the control pipe for later use
         outControlFd = control_pipe[1];
         outChildPid = pid;
+        outVTNumber = tty_num;
 
         explicit_bzero(convctx.password.data(), convctx.password.size());
     }
@@ -993,6 +998,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             envSeat,
             envSessionClass,
             "XDG_SESSION_ID=" + sessionId,
+            "XDG_VTNR=" + std::to_string(_sessions.at(sessionId).vtNumber),
             "XDG_SESSION_TYPE=wayland",
             "XDG_CURRENT_DESKTOP=" + std::string(JOS_DESKTOP_NAME),
             "ZENITH_MULTI_MONITOR_MODE=extend",
@@ -1043,6 +1049,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             envSeat,
             envSessionClass,
             "XDG_SESSION_ID=" + sessionId,
+            "XDG_VTNR=" + std::to_string(_sessions.at(sessionId).vtNumber),
         }));
         properties.emplace_back("PartOf", DBusVariant::make<std::vector<std::string>>({
             serviceName
@@ -1107,6 +1114,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             "XDG_SEAT=" + session.seat,
             "XDG_SESSION_CLASS=user",
             "XDG_SESSION_ID=" + session.id,
+            "XDG_VTNR=" + std::to_string(session.vtNumber),
             "XDG_SESSION_TYPE=wayland",
             "XDG_CURRENT_DESKTOP=" + std::string(JOS_DESKTOP_NAME),
             "WAYLAND_DISPLAY=wayland-0",
@@ -1320,8 +1328,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         if (session.activeState == "failed" || (session.result != "success" && !session.result.empty()))
         {
             Log().Warn(std::format(
-                "Session `{}` will be stopped because activeState==failed || (result!=start-limit-hit && result!='')",
-                session.id
+                "Session `{}` will be stopped: ActiveState={}, Result={}",
+                session.id, session.activeState, session.result
             ));
             StopSession(session.id);
             return;
