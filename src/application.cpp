@@ -36,6 +36,7 @@
 #include "services/driver_manager/driver_manager_service.h"
 #include "services/power_manager/power_manager_service.h"
 #include "services/locale/locale_service.h"
+#include "services/system_setup/system_setup_service.h"
 #include "services/installer/installer_service.h"
 #endif
 #include "utils/jos_exception.h"
@@ -240,7 +241,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
         _serviceManager->Register<Services::NetworkManager::NetworkManagerService>();
         _serviceManager->Register<Services::DriverManager::DriverManagerService>();
         _serviceManager->Register<Services::Locale::LocaleService>();
-        _serviceManager->Register<Services::Installer::InstallerService>();
+        _serviceManager->Register<Services::SystemSetup::SystemSetupService>();
+        //_serviceManager->Register<Services::Installer::InstallerService>();
 #endif
     }
 
