@@ -1,6 +1,6 @@
 pkgname=jappeos_core
 pkgver=1.1.0
-_tag=dev-v1.0.26-1
+_tag=dev-v1.1.0-1
 pkgrel=1
 pkgdesc="Core system daemon for JappeOS."
 arch=('x86_64')
