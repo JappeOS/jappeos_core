@@ -18,7 +18,9 @@
 
 #pragma once
 
+// TODO: DEPRECATED("Use `STORAGE_SYSTEM_FILE_INIT_BOOT_PATH` from the `jappeos_daemon_core` library instead")
 #define STORAGE_SYSTEM_FILE_INIT_BOOT_PATH "/jappeos/init_boot.env"
+// TODO: DEPRECATED("Use `STORAGE_SYSTEM_FILE_LIVE_PACKAGES_PATH` from the `jappeos_daemon_core` library instead")
 #define STORAGE_SYSTEM_FILE_LIVE_PACKAGES_PATH "/jappeos/packages_live"
 
 #define STORAGE_MOUNTPOINT_BOOT "/boot"

@@ -23,6 +23,11 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Utils
 {
+// TODO: DEPRECATED("Use `JOS_LIVE_USER_NAME` from the `jappeos_daemon_core` library instead")
+#define JOS_LIVE_USER_NAME "liveuser"
+// TODO: DEPRECATED("Use `JOS_LIVE_USER_REAL_NAME` from the `jappeos_daemon_core` library instead")
+#define JOS_LIVE_USER_REAL_NAME "Live User"
+
     class OsUtils final
     {
     public:

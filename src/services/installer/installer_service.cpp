@@ -26,7 +26,6 @@
 
 #include "init_boot_file.h"
 #include "../locale/locale_service.h"
-#include "../account_manager/account_manager_service.h"
 #include "../../utils/os_utils.h"
 #include "installer_def.h"
 #include "install_storage_data_builder.h"
@@ -55,10 +54,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
                                        _currentTimezone(*_conn, _iface, "CurrentTimezone", "", true, [this](const std::string& val) { OnSetCurrentTimezone(val); }),
                                        _currentKeyboardLayout(*_conn, _iface, "CurrentKeyboardLayout", {}, true, [this](const auto& val) { OnSetCurrentKeyboardLayout(val); })
     {
-        bool isLive = false;
-        HandleInitialBootup(isLive);
-
-        if (!isLive) return;
+        if (!Utils::OsUtils::IsLiveOrInstallationEnvironment())
+            return;
 
         _iface.RegisterMethod("GetLocaleInfo",     [&] (const auto& m) { OnGetLocaleInfo(m); });
         _iface.RegisterMethod("GetStorageInfo",    [&] (const auto& m) { OnGetStorageInfo(m); });
@@ -406,128 +403,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         auto ret = Message::CreateMethodReturn(message);
         ret.SetArgs(IsValidHostname(hostname));
         ret.Send(*_conn);
-    }
-
-    void InstallerService::HandleInitialBootup(bool& isLive) const
-    {
-        if (Utils::OsUtils::IsLiveOrInstallationEnvironment())
-        {
-            Log().Notice("We are in a Live-environment, initial boot files will not be read.");
-
-            try
-            {
-                const auto accountService = _serviceManager->Get<AccountManager::AccountManagerService>();
-
-                if (accountService == nullptr)
-                    throw std::runtime_error("Account service is not available");
-
-                const auto user = accountService->AddUser(JOS_LIVE_USER_NAME, JOS_LIVE_USER_REAL_NAME);
-                accountService->SetUserPasswordMode(user, 2);
-                accountService->SetUserLocked(user, false);
-            }
-            catch (const std::exception& ex)
-            {
-                Log().Err("Failed to create live-user during initial live environment setup: " + std::string(ex.what()));
-            }
-
-            isLive = true;
-            return;
-        }
-
-        if (!std::filesystem::exists(STORAGE_SYSTEM_FILE_INIT_BOOT_PATH))
-        {
-            Log().Info(
-                std::string(STORAGE_SYSTEM_FILE_INIT_BOOT_PATH) + " does not exist. Continuing regular boot."
-            );
-            isLive = false;
-            return;
-        }
-
-        Log().Notice(
-            std::string(STORAGE_SYSTEM_FILE_INIT_BOOT_PATH)
-            + " exists. Finishing initial setup, then continuing regular boot."
-        );
-
-        try
-        {
-            auto reader = InitBootFile::Reader(STORAGE_SYSTEM_FILE_INIT_BOOT_PATH);
-            const auto localeService = _serviceManager->Get<Locale::LocaleService>();
-            const auto accountService = _serviceManager->Get<AccountManager::AccountManagerService>();
-
-            if (localeService == nullptr || accountService == nullptr)
-                throw std::runtime_error("Locale or account service(s) are not available");
-
-            try
-            {
-                localeService->SetLocale(reader.ReadLocale());
-            }
-            catch (const std::exception& ex)
-            {
-                Log().Err("Failed to set locale during initial setup: " + std::string(ex.what()));
-            }
-
-            try
-            {
-                localeService->SetTimezone(reader.ReadTimezone());
-            }
-            catch (const std::exception& ex)
-            {
-                Log().Err("Failed to set timezone during initial setup: " + std::string(ex.what()));
-            }
-
-            // TODO: Keyboard layout
-            Log().Notice("Skipping keyboard layout during initial setup.");
-
-            try
-            {
-                auto setHostnameMsg = Message::CreateMethodCall(
-                    "org.freedesktop.hostname1",
-                    ObjectPath("/org/freedesktop/hostname1"),
-                    InterfaceName("org.freedesktop.hostname1"),
-                    "SetHostname"
-                );
-
-                setHostnameMsg.SetArgs(reader.ReadHostname());
-                setHostnameMsg.SendWithReplyIgnore(*_conn);
-            }
-            catch (const std::exception& ex)
-            {
-                Log().Err("Failed to set hostname during initial setup: " + std::string(ex.what()));
-            }
-
-            try
-            {
-                // TODO: Allow user to input RealName during installation
-                // TODO: Check validity
-                const auto user = accountService->AddUser(reader.ReadUsername(), reader.ReadUsername());
-                if (!reader.ReadPassword().empty())
-                    accountService->SetUserPassword(user, reader.ReadPassword(), "");
-            }
-            catch (const std::exception& ex)
-            {
-                Log().Err("Failed to create user during initial setup: " + std::string(ex.what()));
-            }
-
-            reader.Close();
-        }
-        catch (const std::exception& ex)
-        {
-            Log().Err("Failed to read " + std::string(STORAGE_SYSTEM_FILE_INIT_BOOT_PATH) + ": " + ex.what());
-        }
-
-        try
-        {
-            std::filesystem::remove(STORAGE_SYSTEM_FILE_INIT_BOOT_PATH);
-            Log().Info("Removed " + std::string(STORAGE_SYSTEM_FILE_INIT_BOOT_PATH));
-        }
-        catch (const std::filesystem::filesystem_error& ex)
-        {
-            Log().Err(
-                "Failed to remove " + std::string(STORAGE_SYSTEM_FILE_INIT_BOOT_PATH) + ": " + std::string(ex.what())
-            );
-        }
-
-        isLive = false;
     }
 
     void InstallerService::CreateLocales()

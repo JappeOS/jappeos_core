@@ -35,10 +35,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         ~InstallerService() override;
         [[nodiscard]] std::string GetName() const override { return "InstallerService"; }
 
-    public:
-        static constexpr auto JOS_LIVE_USER_NAME = "liveuser";
-        static constexpr auto JOS_LIVE_USER_REAL_NAME = "Live User";
-
     private:
         Object     _object;
         Interface& _iface;
@@ -71,7 +67,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
         void OnVerifyUsername(const Message& message) const;
         void OnVerifyHostname(const Message& message) const;
 
-        void HandleInitialBootup(bool& isLive) const;
         void CreateLocales();
         void CreateTimezones();
         void CreateKeyboardLayouts();

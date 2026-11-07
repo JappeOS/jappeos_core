@@ -26,7 +26,10 @@
 
 namespace JappeStudios::JappeOS::JappeOSCore::Services::Installer
 {
-    class InitBootFile
+
+    class
+    [[deprecated("Use `InitBootFile` from the `jappeos_daemon_core` library instead")]]
+    InitBootFile
     {
     public:
         InitBootFile() = delete;

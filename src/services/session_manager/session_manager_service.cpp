@@ -620,7 +620,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                 uid_t uid;
                 std::string seat;
                 CreateSession(
-                    Installer::InstallerService::JOS_LIVE_USER_NAME,
+                    JOS_LIVE_USER_NAME,
                     "",
                     sessionId,
                     uid,
@@ -1260,7 +1260,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         if (!it->second.starting && _isLiveEnvironment
             && activeState == "active"
-            && it->second.username == Installer::InstallerService::JOS_LIVE_USER_NAME
+            && it->second.username == JOS_LIVE_USER_NAME
             && !it->second.installerLaunchScheduled
             && !it->second.installerStarted)
         {
