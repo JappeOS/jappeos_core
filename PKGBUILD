@@ -1,11 +1,11 @@
 pkgname=jappeos_core
-pkgver=1.1.0
+pkgver=1.1.1
 _tag=dev-v1.1.0-1
 pkgrel=1
 pkgdesc="Core system daemon for JappeOS."
 arch=('x86_64')
 url="https://github.com/JappeOS/$pkgname"
-license=('AGPL-3.0-only')
+license=('AGPL-3.0-or-later')
 depends=(
   'dbus'
   'glib2'
@@ -18,7 +18,7 @@ depends=(
   'systemd'
 )
 makedepends=(
-  'cmake'
+  'cmake>=3.31'
   'ninja'
   'pkgconf'
 )
