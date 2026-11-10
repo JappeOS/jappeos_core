@@ -104,9 +104,11 @@ set(JAPPEOS_SYSTEM_SOURCES
         src/services/installer/steps/cleanup_step.cpp
         src/services/installer/steps/cleanup_step.h
         src/services/installer/init_boot_file.h
-        src/utils/os_utils.h
+        src/services/system_setup/system_setup_service.cpp
+        src/services/system_setup/system_setup_service.h
         src/services/driver_manager/driver_manager_service.cpp
         src/services/driver_manager/driver_manager_service.h
+        src/utils/os_utils.h
 )
 
 set(JAPPEOS_SESSION_SOURCES
