@@ -55,6 +55,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
     private:
         InterfaceName     _interfaceName;
         Interface&        _iface;
+        ObjectPath        _nmDevicePath;
         Prop<std::string> _id;
         Prop<std::string> _type;
         Prop<std::string> _state;
