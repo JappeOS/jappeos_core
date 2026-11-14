@@ -249,12 +249,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     void NetworkManagerService::WifiScan(NetworkWifiDevice& dev, const Message& message)
     {
-        SharedPolicy(message);
+        RequireControlAccess(message);
 
         if (!_nmClient)
             throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
 
-        auto* nmDev = nm_client_get_device_by_iface(_nmClient, dev.GetId().c_str());
+        auto* nmDev = nm_client_get_device_by_path(_nmClient, dev._nmDevicePath.ToString().c_str());
         if (!nmDev)
             throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unknown device");
 
@@ -292,7 +292,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
                                             const std::string& secret,
                                             const Message& message)
     {
-        SharedPolicy(message);
+        RequireControlAccess(message);
 
         if (!_nmClient)
             throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
@@ -300,7 +300,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         if (ssid.empty())
             throw DBusException(DBUS_ERROR_INVALID_ARGS, "SSID cannot be empty");
 
-        auto* nmDev = nm_client_get_device_by_iface(_nmClient, dev.GetId().c_str());
+        auto* nmDev = nm_client_get_device_by_path(_nmClient, dev._nmDevicePath.ToString().c_str());
         if (!nmDev)
             throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unknown device");
 
@@ -543,12 +543,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     void NetworkManagerService::WifiDisconnect(NetworkWifiDevice& dev, const Message& message)
     {
-        SharedPolicy(message);
+        RequireControlAccess(message);
 
         if (!_nmClient)
             throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
 
-        auto* nmDev = nm_client_get_device_by_iface(_nmClient, dev.GetId().c_str());
+        auto* nmDev = nm_client_get_device_by_path(_nmClient, dev._nmDevicePath.ToString().c_str());
         if (!nmDev)
             throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unknown device");
 
@@ -585,7 +585,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     void NetworkManagerService::EthernetSetEnabled(NetworkDevice& dev, const bool enabled, const Message& message)
     {
-        SharedPolicy(message);
+        RequireControlAccess(message);
 
         if (!_nmClient)
             throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
@@ -595,7 +595,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             " enabled=" + std::string(enabled ? "true" : "false")
         );
 
-        auto* nmDev = nm_client_get_device_by_iface(_nmClient, dev.GetId().c_str());
+        auto* nmDev = nm_client_get_device_by_path(_nmClient, dev._nmDevicePath.ToString().c_str());
         if (!nmDev)
             throw DBusException(DBUS_ERROR_INVALID_ARGS, "Unknown device");
 
@@ -685,7 +685,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     void NetworkManagerService::WifiSetEnabled(NetworkWifiDevice& dev, const bool enabled, const Message& message)
     {
-        SharedPolicy(message);
+        RequireControlAccess(message);
 
         if (!_nmClient)
             throw DBusException(DBUS_ERROR_FAILED, "NetworkManager is not available");
@@ -701,29 +701,40 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         reply.Send(*_conn);
     }
 
-    // TODO: Polkit
-    void NetworkManagerService::SharedPolicy(const Message& message) const
+    void NetworkManagerService::RequireManagedSession(const Message& message) const
     {
-        const auto sender = message.GetSender();
-        const auto senderUid = _conn->GetUnixUser(sender);
-        const pid_t senderPid = Utils::DBusUtils::GetSenderPID(_rawConn, message.GetRawMessage());
-
+        const auto senderUid = _conn->GetUnixUser(message.GetSender());
         const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
 
         if (!sessionMgr->IsManagedUserSession(senderUid))
-        {
             throw DBusException(DBUS_ERROR_ACCESS_DENIED, "Unknown user");
-        }
+    }
 
+    // TODO: Replace the process allowlist for control operations with polkit.
+    // libnm runs as core's UID, so its own authorization does not check the
+    // original caller. Keep this check until caller-aware authorization exists.
+    void NetworkManagerService::RequireControlAccess(const Message& message) const
+    {
+        RequireManagedSession(message);
+
+        const pid_t senderPid = Utils::DBusUtils::GetSenderPID(_rawConn, message.GetRawMessage());
+        const auto sessionMgr = _serviceManager->Get<SessionManager::SessionManagerService>();
         if (!sessionMgr->IsPrivilegedClientProcess(senderPid, true))
         {
-            throw DBusException(DBUS_ERROR_ACCESS_DENIED, "Unauthorized process");
+            throw DBusException(DBUS_ERROR_ACCESS_DENIED,
+                "Network control denied for caller PID " + std::to_string(senderPid)
+                + " (method " + message.GetMember() + ")");
         }
     }
 
     void NetworkManagerService::OnListDevices(const Message& message) const
     {
-        SharedPolicy(message);
+        // Discovery is read-only. Device properties and hotplug signals already
+        // expose these objects without granting network control. Requiring the
+        // asynchronously populated desktop PID allowlist here makes provider
+        // initialization depend on session-manager signal dispatch ordering.
+        RequireManagedSession(message);
+
         auto msg = Message::CreateMethodReturn(message);
         const auto list = ListDevices();
         _serviceManager->Get<Logger::LoggerService>()->Debug(
@@ -919,6 +930,16 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
         g_signal_connect(
             nmDev,
+            "notify::interface",
+            G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
+            {
+                self->OnDeviceInterfaceChanged(NM_DEVICE(obj));
+            }),
+            this
+        );
+
+        g_signal_connect(
+            nmDev,
             "notify::state",
             G_CALLBACK(+[](GObject* obj, GParamSpec*, NetworkManagerService* self)
             {
@@ -993,7 +1014,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         if (!iface)
             return;
 
-        ObjectPath path = GetBaseObjectPath().Child("Devices").Child(EncodeForObjectPath(iface)); // TODO: Interface names can change???
+        const ObjectPath path = GetDeviceObjectPath(nmDev);
         std::unique_ptr<NetworkDevice> device;
 
         if (_devices.contains(path))
@@ -1018,6 +1039,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
         SubscribeToDeviceSignals(nmDev);
 
+        device->_nmDevicePath = ObjectPath(nm_object_get_path(NM_OBJECT(nmDev)));
         device->_id = iface;
         device->_managed = nm_device_get_managed(nmDev);
 
@@ -1048,11 +1070,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
     void NetworkManagerService::RemoveDevice(NMDevice* nmDev)
     {
-        const char* iface = nm_device_get_iface(nmDev);
-        if (!iface)
-            return;
-
-        const ObjectPath path = GetBaseObjectPath().Child("Devices").Child(EncodeForObjectPath(iface));
+        const ObjectPath path = GetDeviceObjectPath(nmDev);
 
         const auto it = _devices.find(path);
         if (it == _devices.end())
@@ -1071,7 +1089,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
             _connections.erase(connPath);
             try
             {
-                OnConnectionRemoved(path);
+                OnConnectionRemoved(connPath);
             }
             catch (const std::exception& e)
             {
@@ -1146,18 +1164,28 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         dev->SetActiveConnection(path);
     }
 
+    ObjectPath NetworkManagerService::GetDeviceObjectPath(NMDevice* nmDev)
+    {
+        // NetworkManager's object path identifies the device for its lifetime.
+        // The kernel interface name can change after discovery (wlan0 -> wlp3s0).
+        // Preserve the complete upstream path to avoid collisions or assumptions
+        // about its final component. Clients discover these opaque object paths.
+        return ObjectPath(GetBaseObjectPath().Child("Devices").ToString()
+            + nm_object_get_path(NM_OBJECT(nmDev)));
+    }
+
     NetworkDevice* NetworkManagerService::FindDevice(NMDevice* nmDev)
     {
-        const char* iface = nm_device_get_iface(nmDev);
-        if (!iface)
-            return nullptr;
-
-        const ObjectPath path = GetBaseObjectPath()
-            .Child("Devices")
-            .Child(EncodeForObjectPath(iface));
-
-        const auto it = _devices.find(path);
+        const auto it = _devices.find(GetDeviceObjectPath(nmDev));
         return it != _devices.end() ? it->second.get() : nullptr;
+    }
+
+    void NetworkManagerService::OnDeviceInterfaceChanged(NMDevice* nmDev)
+    {
+        auto* dev = FindDevice(nmDev);
+        const auto* iface = nm_device_get_iface(nmDev);
+        if (dev && iface)
+            dev->_id = iface;
     }
 
     NMDeviceWifi* NetworkManagerService::FindWifiDeviceForConnection(const NetworkConnection& conn) const

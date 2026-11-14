@@ -75,7 +75,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
 
         std::unique_ptr<SignalSubscription> _subNameOwnerChanged;
 
-        void SharedPolicy(const Message& message) const;
+        void RequireManagedSession(const Message& message) const;
+        void RequireControlAccess(const Message& message) const;
 
         void OnListDevices(const Message& message) const;
         void EmitDeviceAdded(const ObjectPath& path);
@@ -94,7 +95,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         void OnDeviceStateChanged(NMDevice* nmDev);
         void OnDeviceManagedChanged(NMDevice* nmDev);
         void OnDeviceActiveConnectionChanged(NMDevice* nmDev);
+        ObjectPath GetDeviceObjectPath(NMDevice* nmDev);
         NetworkDevice* FindDevice(NMDevice* nmDev);
+        void OnDeviceInterfaceChanged(NMDevice* nmDev);
         NMDeviceWifi* FindWifiDeviceForConnection(const NetworkConnection& conn) const;
 
         void EnsureConnectionObject(NMDevice* nmDev, NMActiveConnection* ac, const ObjectPath& path);
