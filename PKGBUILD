@@ -3,7 +3,7 @@ pkgbase=jappeos_core
 pkgname=('jappeos_core')
 pkgver=1.1.3
 _tag=dev-v1.1.3-1
-pkgrel=3
+pkgrel=4
 arch=('x86_64')
 url="https://github.com/JappeOS/$pkgbase"
 license=('AGPL-3.0-or-later')
@@ -12,6 +12,14 @@ makedepends=(
   'cmake>=3.31'
   'ninja'
   'pkgconf'
+  'dbus'
+  'pam'
+  'glib2'
+  'networkmanager'
+  'libpipewire'
+  'libpulse'
+  'parted'
+  'icu'
 )
 backup=(
   'etc/pam.d/jappeos-greeter'
@@ -34,14 +42,16 @@ package_jappeos_core() {
   pkgdesc="Core system daemon for JappeOS."
   depends=(
     'dbus'
+    'systemd'
+    'pacman'
+    'udev'
+    'pam'
     'glib2'
-    'icu'
+    'networkmanager'
     'libpipewire'
     'libpulse'
-    'networkmanager'
-    'pam'
     'parted'
-    'systemd'
+    'icu'
   )
 
   cd "$srcdir/$pkgbase-$_tag"
