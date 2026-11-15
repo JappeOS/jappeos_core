@@ -1059,4 +1059,4 @@ dkms.conf
 *.dis
 
 # Temporary project ignores (TODO)
-/src/services/bsod/
+/src/jappeos_core/services/bsod/
