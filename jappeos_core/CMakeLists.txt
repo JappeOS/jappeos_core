@@ -239,3 +239,19 @@ install(DIRECTORY data/systemd/system/
 install(DIRECTORY data/pam.d/
         DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/pam.d"
 )
+
+# Optional isolated regression harness; it never runs Application::Run().
+option(JAPPEOS_BUILD_NETWORK_TESTS "Build isolated NetworkManager integration harness" OFF)
+if(JAPPEOS_BUILD_NETWORK_TESTS)
+    set(network_test_sources ${JAPPEOS_COMMON_SOURCES} ${JAPPEOS_SYSTEM_SOURCES})
+    list(REMOVE_ITEM network_test_sources src/main.cpp)
+    add_executable(network_device_harness tests/network_device_harness.cpp ${network_test_sources})
+    target_compile_definitions(network_device_harness PRIVATE JAPPEOS_DAEMON_SYSTEM)
+    jappeos_configure_target(network_device_harness)
+    enable_testing()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME network_device_rename
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/network_device_rename_test.py
+            $<TARGET_FILE:network_device_harness>)
+    set_tests_properties(network_device_rename PROPERTIES TIMEOUT 45)
+endif()

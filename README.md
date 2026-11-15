@@ -117,6 +117,13 @@ filesystem, and building the *.iso.
 
 Binaries will later be served from a proper package manager repository.
 
+Graphical sessions keep a PAM/logind session leader in the system daemon's login
+helper. The desktop or greeter, session daemon and live installer are transient
+**user** units under `user@UID.service`, launched through that manager's private
+D-Bus socket. `pam_systemd` must start the user manager during session creation.
+Each unit receives its `XDG_SESSION_ID`; session-specific environment variables
+are not imported into the shared user manager environment.
+
 ## Contributing
 
 Contributions of all kinds are welcome and appreciated. You can help the project by:

@@ -1,23 +1,14 @@
-pkgname=jappeos_core
+# Maintainer: Jappe02 <Jappe00001@gmail.com>
+pkgbase=jappeos_core
+pkgname=('jappeos_core')
 pkgver=1.1.3
 _tag=dev-v1.1.2-1
-pkgrel=1
-pkgdesc="Core system daemon for JappeOS."
+pkgrel=2
 arch=('x86_64')
-url="https://github.com/JappeOS/$pkgname"
+url="https://github.com/JappeOS/$pkgbase"
 license=('AGPL-3.0-or-later')
-depends=(
-  'dbus'
-  'glib2'
-  'icu'
-  'libpipewire'
-  'libpulse'
-  'networkmanager'
-  'pam'
-  'parted'
-  'systemd'
-)
 makedepends=(
+  'git'
   'cmake>=3.31'
   'ninja'
   'pkgconf'
@@ -27,21 +18,34 @@ backup=(
   'etc/pam.d/jappeos-login'
   'etc/pam.d/jappeos-login-nopassword'
 )
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$_tag.tar.gz")
+source=("$pkgbase-$pkgver.tar.gz::$url/archive/refs/tags/$_tag.tar.gz")
 sha256sums=('SKIP')
 
 build() {
-  cd "$srcdir/$pkgname-$_tag"
+  cd "$srcdir/$pkgbase-$_tag"
 
-  cmake -S . -B build -G Ninja \
+  cmake -S jappeos_core -B jappeos_core/build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr
-  cmake --build build
+  cmake --build jappeos_core/build
 }
 
-package() {
-  cd "$srcdir/$pkgname-$_tag"
+package_jappeos_core() {
+  pkgdesc="Core system daemon for JappeOS."
+  depends=(
+    'dbus'
+    'glib2'
+    'icu'
+    'libpipewire'
+    'libpulse'
+    'networkmanager'
+    'pam'
+    'parted'
+    'systemd'
+  )
 
-  DESTDIR="$pkgdir" cmake --install build
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  cd "$srcdir/$pkgbase-$_tag"
+
+  DESTDIR="$pkgdir" cmake --install jappeos_core/build
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/jappeos_core/LICENSE"
 }
