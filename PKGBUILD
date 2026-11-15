@@ -2,7 +2,7 @@
 pkgbase=jappeos_core
 pkgname=('jappeos_core')
 pkgver=1.1.3
-_tag=dev-v1.1.3-1
+_tag=dev-v1.1.3-3
 pkgrel=3
 arch=('x86_64')
 url="https://github.com/JappeOS/$pkgbase"
