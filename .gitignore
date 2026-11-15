@@ -997,12 +997,6 @@ _deps
 # Prerequisites
 *.d
 
-# Runtime package data directories, not generated dependency files.
-!data/pam.d/
-!data/pam.d/**
-!data/dbus-1/system.d/
-!data/dbus-1/system.d/**
-
 # Object files
 *.o
 *.ko
