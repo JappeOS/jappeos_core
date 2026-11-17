@@ -33,6 +33,7 @@ namespace JappeStudios::JappeOS::NotificationManager
     const ObjectPath NotificationServer::BASE_OBJECT = ObjectPath("/org/freedesktop/Notifications");
     const InterfaceName NotificationServer::BASE_INTERFACE = InterfaceName("org.freedesktop.Notifications");
     const std::vector<std::string> NotificationServer::CAPABILITIES = {"body", "persistence"};
+    const uint32_t NotificationServer::MAX_COUNT = 30;
 
     NotificationServer::NotificationServer() :
         _conn(DaemonCore::Daemon::GetConnection()),
@@ -84,14 +85,14 @@ namespace JappeStudios::JappeOS::NotificationManager
 
     bool NotificationServer::DismissNotification(const Notification& notification)
     {
-        return RemoveNotification(notification.replacesId, NotificationCloseReason::Dismissed);
+        return RemoveNotification(notification.replacesId, NotificationRemoveReason::Dismissed);
     }
 
     void NotificationServer::ClearNotifications()
     {
         for (const auto& it : _notificationsByUid | std::views::values)
         {
-            RemoveNotification(it->replacesId, NotificationCloseReason::Dismissed);
+            RemoveNotification(it->replacesId, NotificationRemoveReason::Dismissed);
         }
     }
 
@@ -185,7 +186,7 @@ namespace JappeStudios::JappeOS::NotificationManager
             isId = !isId;
         }
 
-        AddNotification(sender, Notification{
+        AddNotification(Notification{
             .replacesId = notificationId,
             .sender = sender,
             .appName = appName,
@@ -212,23 +213,25 @@ namespace JappeStudios::JappeOS::NotificationManager
         if (sender != foundSender)
             throw DBusException(DBUS_ERROR_FAILED);
 
-        if (!RemoveNotification(id, NotificationCloseReason::CloseNotificationCalled))
+        if (!RemoveNotification(id, NotificationRemoveReason::CloseNotificationCalled))
             throw DBusException(DBUS_ERROR_FAILED);
 
         Message::CreateMethodReturn(message).Send(_conn);
     }
 
-    void NotificationServer::AddNotification(std::string sender, Notification notification)
+    void NotificationServer::AddNotification(Notification notification)
     {
         auto notif = std::make_shared<const Notification>(std::move(notification));
         if (notif->replacesId == 0)
             throw DBusException(DBUS_ERROR_FAILED, "replacesId must be more than 0");
 
+        // Insert notifications to maps
         auto [senderIt, senderInserted] =
-            _notificationsBySender[std::move(sender)].insert_or_assign(notif->replacesId, notif);
+            _notificationsBySender[notif->sender].insert_or_assign(notif->replacesId, notif);
         auto [uidIt, uidInserted] =
             _notificationsByUid.insert_or_assign(notif->replacesId, notif);
 
+        // Fire events for added/updated notification
         if (!senderInserted || !uidInserted)
         {
             try
@@ -244,6 +247,23 @@ namespace JappeStudios::JappeOS::NotificationManager
             { Log().Err("OnNotificationAdded event handler failed: " + std::string(e.what())); }
         }
 
+        // Remove old notifications
+        if (_notificationsByUid.size() > MAX_COUNT)
+        {
+            try
+            {
+                RemoveNotification(
+                    _notificationsByUid.begin()->second->replacesId,
+                    NotificationRemoveReason::MaxCountReached
+                );
+            }
+            catch (const std::exception& e)
+            {
+                Log().Err("Failed to remove notification because of MaxCountReached: " + std::string(e.what()));
+            }
+        }
+
+        // Register timeout task for notification expiration
         guint timeout = 0;
         if (notif->expireTimeout == -1)
         {
@@ -266,7 +286,7 @@ namespace JappeStudios::JappeOS::NotificationManager
                 const auto* task = static_cast<TimeoutTask*>(data);
                 try
                 {
-                    task->server->RemoveNotification(task->id, NotificationCloseReason::Expired);
+                    task->server->RemoveNotification(task->id, NotificationRemoveReason::Expired);
                 }
                 catch (const std::exception& ex)
                 {
@@ -283,7 +303,7 @@ namespace JappeStudios::JappeOS::NotificationManager
         _notificationExpirationTasks.push_back(timeoutTask);
     }
 
-    bool NotificationServer::RemoveNotification(const uint32_t notificationId, NotificationCloseReason reason)
+    bool NotificationServer::RemoveNotification(const uint32_t notificationId, NotificationRemoveReason reason)
     {
         const auto& it = _notificationsByUid.find(notificationId);
         if (it == _notificationsByUid.end())
@@ -315,6 +335,21 @@ namespace JappeStudios::JappeOS::NotificationManager
         }
 
         return removed;
+    }
+
+    void NotificationServer::ArchiveNotification(const Notification& notification)
+    {
+        AddNotification(Notification{
+            .replacesId = notification.replacesId,
+            .sender = notification.sender,
+            .archived = true,
+            .appName = notification.appName,
+            .appIcon = notification.appIcon,
+            .summary = notification.summary,
+            .body = notification.body,
+            .actions = {},
+            .expireTimeout = 0
+        });
     }
 
 }

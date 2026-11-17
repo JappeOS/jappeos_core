@@ -17,7 +17,7 @@
  */
 
 #pragma once
-#include <glib/gtypes.h>
+#include <glib.h>
 
 #include "dbus/dbus_wrapper.h"
 #include "logging/logger.h"
@@ -38,6 +38,7 @@ namespace JappeStudios::JappeOS::NotificationManager
     {
         const uint32_t replacesId;
         const std::string sender;
+        const bool archived = false;
 
         const std::string appName;
         const std::string appIcon;
@@ -47,7 +48,7 @@ namespace JappeStudios::JappeOS::NotificationManager
         const int expireTimeout;
     };
 
-    enum class NotificationCloseReason : uint32_t
+    enum class NotificationRemoveReason : uint32_t
     {
         /**
          * @brief The notification expired.
@@ -65,9 +66,9 @@ namespace JappeStudios::JappeOS::NotificationManager
         CloseNotificationCalled = 3,
 
         /**
-         * @brief Undefined/reserved reasons.
+         * @brief Maximum notification count was reached.
          */
-        Undefined = 4,
+        MaxCountReached = 4,
     };
 
     /**
@@ -113,13 +114,15 @@ namespace JappeStudios::JappeOS::NotificationManager
         void OnNotify(const Message& message);
         void OnCloseNotification(const Message& message);
 
-        void AddNotification(std::string sender, Notification notification);
-        bool RemoveNotification(uint32_t notificationId, NotificationCloseReason reason);
+        void AddNotification(Notification notification);
+        bool RemoveNotification(uint32_t notificationId, NotificationRemoveReason reason);
+        void ArchiveNotification(const Notification& notification); // <-- TODO: Unused
 
     private:
         static const ObjectPath BASE_OBJECT;
         static const InterfaceName BASE_INTERFACE;
         static const std::vector<std::string> CAPABILITIES;
+        static const uint32_t MAX_COUNT;
 
         CREATE_LOGGER("NotificationServer")
     };
