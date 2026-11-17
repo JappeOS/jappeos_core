@@ -48,6 +48,7 @@ namespace JappeStudios::JappeOS::NotificationManager
         NotificationServer _notificationServer;
         std::unordered_map<ObjectPath, std::shared_ptr<NotificationObject>, ObjectPathHash> _notifPathToObject;
         std::unordered_map<uint32_t, std::shared_ptr<NotificationObject>> _notifIdToObject;
+        std::vector<uint32_t> _notifIdsOrdered;
 
         void EmitNotificationAdded(uint32_t notificationId) const;
         void EmitNotificationUpdated(uint32_t notificationId) const;
@@ -56,7 +57,16 @@ namespace JappeStudios::JappeOS::NotificationManager
         void OnGetNotifications(const Message& message) const;
         void OnClearNotifications(const Message& message);
 
+        /**
+         * @param objectPath The object path to the notification object
+         * @return A notification based on its object path, NEVER 'nullptr'
+         */
         std::shared_ptr<const Notification> GetNotification(const ObjectPath& objectPath) const;
+
+        /**
+         * @param id The ID of the notification object
+         * @return A notification based on its ID, NEVER 'nullptr'
+         */
         std::shared_ptr<const NotificationObject> GetNotification(uint32_t id) const;
 
     private:

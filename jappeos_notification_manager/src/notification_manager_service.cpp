@@ -43,6 +43,7 @@ namespace JappeStudios::JappeOS::NotificationManager
                 const auto obj = std::make_shared<NotificationObject>(_notificationServer, notif);
                 _notifPathToObject.insert_or_assign(obj->GetObjectPath(), obj);
                 _notifIdToObject.insert_or_assign(obj->GetNotification()->replacesId, obj);
+                _notifIdsOrdered.push_back(obj->GetNotification()->replacesId);
                 EmitNotificationAdded(n);
             });
 
@@ -67,6 +68,7 @@ namespace JappeStudios::JappeOS::NotificationManager
                 const auto obj = GetNotification(n);
                 _notifPathToObject.erase(obj->GetObjectPath());
                 _notifIdToObject.erase(obj->GetNotification()->replacesId);
+                std::erase(_notifIdsOrdered, obj->GetNotification()->replacesId);
                 EmitNotificationRemoved(n);
             });
     }
@@ -107,8 +109,8 @@ namespace JappeStudios::JappeOS::NotificationManager
     void NotificationManagerService::OnGetNotifications(const Message& message) const
     {
         std::vector<ObjectPath> notificationPaths;
-        for (const auto& notification : _notificationServer.GetNotifications())
-            notificationPaths.push_back(GetNotification(notification->replacesId)->GetObjectPath());
+        for (const auto& id : _notifIdsOrdered)
+            notificationPaths.push_back(GetNotification(id)->GetObjectPath());
 
         auto ret = Message::CreateMethodReturn(message);
         ret.SetArgs(notificationPaths);
@@ -126,7 +128,11 @@ namespace JappeStudios::JappeOS::NotificationManager
         const auto it = _notifPathToObject.find(objectPath);
         if (it == _notifPathToObject.end())
             throw DBusException(DBUS_ERROR_UNKNOWN_OBJECT, "Could not map notification object path to real object");
-        return it->second->GetNotification();
+        const auto second = it->second;
+        NULL_CHECK_VAR(second, "second");
+        const auto notif = second->GetNotification();
+        NULL_CHECK_VAR(notif, "notif");
+        return notif;
     }
 
     std::shared_ptr<const NotificationObject> NotificationManagerService::GetNotification(const uint32_t id) const
@@ -134,7 +140,9 @@ namespace JappeStudios::JappeOS::NotificationManager
         const auto it = _notifIdToObject.find(id);
         if (it == _notifIdToObject.end())
             throw DBusException(DBUS_ERROR_UNKNOWN_OBJECT, "Could not map notification ID to real object");
-        return it->second;
+        const auto second = it->second;
+        NULL_CHECK_VAR(second, "second");
+        return second;
     }
 
     // NotificationObject
