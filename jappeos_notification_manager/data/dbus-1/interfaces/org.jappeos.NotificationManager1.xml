@@ -1,0 +1,46 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+                      "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="org.jappeos.NotificationManager1">
+    <method name="GetNotifications">
+      <arg name="notifications" type="ao" direction="out"/>
+    </method>
+
+    <method name="InvokeAction">
+      <arg name="path" type="o" direction="in"/>
+      <arg name="action" type="t" direction="in"/>
+    </method>
+
+    <method name="DismissNotification">
+      <arg name="path" type="o" direction="in"/>
+    </method>
+
+    <method name="ClearNotifications">
+    </method>
+
+    <signal name="NotificationAdded">
+      <arg name="notification" type="o"/>
+    </signal>
+
+    <signal name="NotificationUpdated">
+      <arg name="notification" type="o"/>
+    </signal>
+
+    <signal name="NotificationRemoved">
+      <arg name="notification" type="o"/>
+    </signal>
+  </interface>
+
+  <interface name="org.jappeos.NotificationManager1.Notification">
+    <property name="AppName" type="s" access="read"/>
+    <property name="AppIcon" type="s" access="read"/>
+    <property name="Summary" type="s" access="read"/>
+    <property name="Body" type="s" access="read"/>
+    <property name="ActionKeys" type="as" access="read"/>
+
+    <method name="GetActionName">
+      <arg name="key" type="s" direction="in"/>
+      <arg name="name" type="s" direction="out"/>
+    </method>
+  </interface>
+</node>

@@ -1,7 +1,7 @@
 # Maintainer: Jappe02 <Jappe00001@gmail.com>
 pkgbase=jappeos_core
-pkgname=('jappeos_core')
-pkgver=1.1.3
+pkgname=('jappeos_core' 'jappeos_notification_manager')
+pkgver=1.2.0
 _tag=dev-v1.1.3-3
 pkgrel=4
 arch=('x86_64')
@@ -32,10 +32,19 @@ sha256sums=('SKIP')
 build() {
   cd "$srcdir/$pkgbase-$_tag"
 
+  # jappeos_core
+
   cmake -S jappeos_core -B jappeos_core/build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr
   cmake --build jappeos_core/build
+
+  # jappeos_notification_manager
+
+  cmake -S jappeos_notification_manager -B jappeos_notification_manager/build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build jappeos_notification_manager/build
 }
 
 package_jappeos_core() {
@@ -58,4 +67,19 @@ package_jappeos_core() {
 
   DESTDIR="$pkgdir" cmake --install jappeos_core/build
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/jappeos_core/LICENSE"
+}
+
+package_jappeos_notification_manager() {
+  pkgdesc="Session notification daemon for JappeOS."
+  depends=(
+    'dbus'
+    'systemd'
+    'pacman'
+    'glib2'
+  )
+
+  cd "$srcdir/$pkgbase-$_tag"
+
+  DESTDIR="$pkgdir" cmake --install jappeos_notification_manager/build
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/jappeos_notification_manager/LICENSE"
 }

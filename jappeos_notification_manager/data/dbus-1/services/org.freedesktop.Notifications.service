@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.freedesktop.Notifications
+Exec=/usr/lib/jappeos_notification_manager/jappeos_notification_manager
+SystemdService=jappeos-notification-manager.service

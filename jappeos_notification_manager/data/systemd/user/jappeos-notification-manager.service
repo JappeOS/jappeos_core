@@ -1,0 +1,16 @@
+[Unit]
+Description=JappeOS Notification Server
+PartOf=graphical-session.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.Notifications
+ExecStart=/usr/lib/jappeos_notification_manager/jappeos_notification_manager
+
+Restart=on-failure
+RestartSec=2s
+
+StandardOutput=journal
+StandardError=journal
