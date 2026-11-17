@@ -31,10 +31,8 @@ namespace JappeStudios::JappeOS::NotificationManager
         _object(_conn, BASE_OBJECT),
         _iface(_object.CreateInterface(BASE_INTERFACE))
     {
-        _iface.RegisterMethod("GetNotifications",    [&](const Message& m){ OnGetNotifications(m); });
-        _iface.RegisterMethod("InvokeAction",        [&](const Message& m){ OnInvokeAction(m); });
-        _iface.RegisterMethod("DismissNotification", [&](const Message& m){ OnDismissNotification(m); });
-        _iface.RegisterMethod("ClearNotifications",  [&](const Message& m){ OnClearNotifications(m); });
+        _iface.RegisterMethod("GetNotifications",   [&](const Message& m){ OnGetNotifications(m); });
+        _iface.RegisterMethod("ClearNotifications", [&](const Message& m){ OnClearNotifications(m); });
 
         _notificationServer
             .OnNotificationAdded
@@ -42,7 +40,7 @@ namespace JappeStudios::JappeOS::NotificationManager
             {
                 const auto notif = _notificationServer.GetNotification(n);
                 NULL_CHECK_VAR(notif, "notif");
-                const auto obj = std::make_shared<NotificationObject>(notif);
+                const auto obj = std::make_shared<NotificationObject>(_notificationServer, notif);
                 _notifPathToObject.insert_or_assign(obj->GetObjectPath(), obj);
                 _notifIdToObject.insert_or_assign(obj->GetNotification()->replacesId, obj);
                 EmitNotificationAdded(n);
@@ -54,7 +52,7 @@ namespace JappeStudios::JappeOS::NotificationManager
             {
                 const auto notif = _notificationServer.GetNotification(n);
                 NULL_CHECK_VAR(notif, "notif");
-                const auto obj = std::make_shared<NotificationObject>(notif);
+                const auto obj = std::make_shared<NotificationObject>(_notificationServer, notif);
                 _notifPathToObject.insert_or_assign(obj->GetObjectPath(), obj);
                 _notifIdToObject.insert_or_assign(obj->GetNotification()->replacesId, obj);
                 EmitNotificationUpdated(n);
@@ -117,20 +115,6 @@ namespace JappeStudios::JappeOS::NotificationManager
         ret.Send(_conn);
     }
 
-    void NotificationManagerService::OnInvokeAction(const Message& message) const
-    {
-        const auto [path, action] = message.GetArgs<ObjectPath, size_t>();
-        _notificationServer.InvokeAction(*GetNotification(path), action);
-        Message::CreateMethodReturn(message).Send(_conn);
-    }
-
-    void NotificationManagerService::OnDismissNotification(const Message& message)
-    {
-        const auto [path] = message.GetArgs<ObjectPath>();
-        _notificationServer.DismissNotification(*GetNotification(path));
-        Message::CreateMethodReturn(message).Send(_conn);
-    }
-
     void NotificationManagerService::OnClearNotifications(const Message& message)
     {
         _notificationServer.ClearNotifications();
@@ -155,22 +139,27 @@ namespace JappeStudios::JappeOS::NotificationManager
 
     // NotificationObject
 
-    NotificationObject::NotificationObject(const std::shared_ptr<const Notification>& source) :
+    NotificationObject::NotificationObject(
+        NotificationServer& notificationServer,
+        const std::shared_ptr<const Notification>& source) :
         _conn(DaemonCore::Daemon::GetConnection()),
         _object(
             _conn,
             NotificationManagerService::BASE_OBJECT.Child("notifications").Child(std::to_string(source->replacesId))
         ),
         _iface(_object.CreateInterface(NotificationManagerService::BASE_INTERFACE.Child("Notification"))),
+        _notificationServer(notificationServer),
         _notification(source)
     {
         _iface.RegisterProperty<std::string>("AppName", [&] { return _notification->appName; });
         _iface.RegisterProperty<std::string>("AppIcon", [&] { return _notification->appIcon; });
         _iface.RegisterProperty<std::string>("Summary", [&] { return _notification->summary; });
-        _iface.RegisterProperty<std::string>("Body", [&] { return _notification->body; });
+        _iface.RegisterProperty<std::string>("Body",    [&] { return _notification->body; });
         _iface.RegisterProperty<std::vector<std::string>>("ActionKeys", [&] { return GetActionKeys(); });
 
-        _iface.RegisterMethod("GetActionName", [&](const Message& m) { return OnGetActionName(m); });
+        _iface.RegisterMethod("InvokeAction",  [&](const Message& m){ OnInvokeAction(m); });
+        _iface.RegisterMethod("Dismiss",       [&](const Message& m){ OnDismiss(m); });
+        _iface.RegisterMethod("GetActionName", [&](const Message& m){ OnGetActionName(m); });
     }
 
     void NotificationObject::OnGetActionName(const Message& message) const
@@ -188,6 +177,19 @@ namespace JappeStudios::JappeOS::NotificationManager
         auto ret = Message::CreateMethodReturn(message);
         ret.SetArgs(name);
         ret.Send(_conn);
+    }
+
+    void NotificationObject::OnInvokeAction(const Message& message) const
+    {
+        const auto [action] = message.GetArgs<size_t>();
+        _notificationServer.InvokeAction(*GetNotification(), action);
+        Message::CreateMethodReturn(message).Send(_conn);
+    }
+
+    void NotificationObject::OnDismiss(const Message& message) const
+    {
+        _notificationServer.DismissNotification(*GetNotification());
+        Message::CreateMethodReturn(message).Send(_conn);
     }
 
     std::vector<std::string>& NotificationObject::GetActionKeys()

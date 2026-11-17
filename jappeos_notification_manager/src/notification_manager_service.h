@@ -54,8 +54,6 @@ namespace JappeStudios::JappeOS::NotificationManager
         void EmitNotificationRemoved(uint32_t notificationId) const;
 
         void OnGetNotifications(const Message& message) const;
-        void OnInvokeAction(const Message& message) const;
-        void OnDismissNotification(const Message& message);
         void OnClearNotifications(const Message& message);
 
         std::shared_ptr<const Notification> GetNotification(const ObjectPath& objectPath) const;
@@ -71,7 +69,9 @@ namespace JappeStudios::JappeOS::NotificationManager
     class NotificationObject
     {
     public:
-        explicit NotificationObject(const std::shared_ptr<const Notification>& source);
+        explicit NotificationObject(
+            NotificationServer& notificationServer,
+            const std::shared_ptr<const Notification>& source);
         std::shared_ptr<const Notification> GetNotification() const { return _notification; }
         ObjectPath GetObjectPath() const { return _object.GetPath(); }
 
@@ -80,10 +80,14 @@ namespace JappeStudios::JappeOS::NotificationManager
         Object      _object;
         Interface&  _iface;
 
+        NotificationServer&                 _notificationServer;
         std::shared_ptr<const Notification> _notification;
-        std::vector<std::string> _actionIds;
+        std::vector<std::string>            _actionIds;
 
         void OnGetActionName(const Message& message) const;
+        void OnInvokeAction(const Message& message) const;
+        void OnDismiss(const Message& message) const;
+
         std::vector<std::string>& GetActionKeys();
     };
 

@@ -6,15 +6,6 @@
       <arg name="notifications" type="ao" direction="out"/>
     </method>
 
-    <method name="InvokeAction">
-      <arg name="path" type="o" direction="in"/>
-      <arg name="action" type="t" direction="in"/>
-    </method>
-
-    <method name="DismissNotification">
-      <arg name="path" type="o" direction="in"/>
-    </method>
-
     <method name="ClearNotifications">
     </method>
 
@@ -41,6 +32,13 @@
     <method name="GetActionName">
       <arg name="key" type="s" direction="in"/>
       <arg name="name" type="s" direction="out"/>
+    </method>
+
+    <method name="InvokeAction">
+      <arg name="action" type="t" direction="in"/>
+    </method>
+
+    <method name="Dismiss">
     </method>
   </interface>
 </node>
