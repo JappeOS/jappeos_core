@@ -42,8 +42,8 @@ namespace JappeStudios::JappeOS::NotificationManager
                 NULL_CHECK_VAR(notif, "notif");
                 const auto obj = std::make_shared<NotificationObject>(_notificationServer, notif);
                 _notifPathToObject.insert_or_assign(obj->GetObjectPath(), obj);
-                _notifIdToObject.insert_or_assign(obj->GetNotification()->replacesId, obj);
-                _notifIdsOrdered.push_back(obj->GetNotification()->replacesId);
+                _notifIdToObject.insert_or_assign(obj->GetNotification()->id, obj);
+                _notifIdsOrdered.push_back(obj->GetNotification()->id);
                 EmitNotificationAdded(n);
             });
 
@@ -55,7 +55,7 @@ namespace JappeStudios::JappeOS::NotificationManager
                 NULL_CHECK_VAR(notif, "notif");
                 const auto obj = std::make_shared<NotificationObject>(_notificationServer, notif);
                 _notifPathToObject.insert_or_assign(obj->GetObjectPath(), obj);
-                _notifIdToObject.insert_or_assign(obj->GetNotification()->replacesId, obj);
+                _notifIdToObject.insert_or_assign(obj->GetNotification()->id, obj);
                 EmitNotificationUpdated(n);
             });
 
@@ -67,8 +67,8 @@ namespace JappeStudios::JappeOS::NotificationManager
                 NULL_CHECK_VAR(notif, "notif");
                 const auto obj = GetNotification(n);
                 _notifPathToObject.erase(obj->GetObjectPath());
-                _notifIdToObject.erase(obj->GetNotification()->replacesId);
-                std::erase(_notifIdsOrdered, obj->GetNotification()->replacesId);
+                _notifIdToObject.erase(obj->GetNotification()->id);
+                std::erase(_notifIdsOrdered, obj->GetNotification()->id);
                 EmitNotificationRemoved(n);
             });
     }
@@ -153,7 +153,7 @@ namespace JappeStudios::JappeOS::NotificationManager
         _conn(DaemonCore::Daemon::GetConnection()),
         _object(
             _conn,
-            NotificationManagerService::BASE_OBJECT.Child("notifications").Child(std::to_string(source->replacesId))
+            NotificationManagerService::BASE_OBJECT.Child("notifications").Child(std::to_string(source->id))
         ),
         _iface(_object.CreateInterface(NotificationManagerService::BASE_INTERFACE.Child("Notification"))),
         _notificationServer(notificationServer),

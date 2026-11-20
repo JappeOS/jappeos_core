@@ -36,7 +36,7 @@ namespace JappeStudios::JappeOS::NotificationManager
 
     struct Notification
     {
-        const uint32_t replacesId;
+        const uint32_t id;
         const std::string sender;
         const bool archived = false;
 
@@ -104,7 +104,7 @@ namespace JappeStudios::JappeOS::NotificationManager
         Object      _object;
         Interface&  _iface;
 
-        uint32_t _currentUid = 0;
+        uint32_t _currentUid = 1;
         std::map<std::string, std::map<uint32_t, std::shared_ptr<const Notification>>> _notificationsBySender;
         std::map<uint32_t, std::shared_ptr<const Notification>> _notificationsByUid;
         std::vector<guint> _notificationExpirationTasks;

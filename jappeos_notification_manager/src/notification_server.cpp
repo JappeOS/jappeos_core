@@ -71,7 +71,7 @@ namespace JappeStudios::JappeOS::NotificationManager
             _iface.GetName(),
             "ActionInvoked"
         );
-        sig.SetArgs(notification.replacesId, action.key);
+        sig.SetArgs(notification.id, action.key);
         sig.Send(_conn);
     }
 
@@ -85,14 +85,14 @@ namespace JappeStudios::JappeOS::NotificationManager
 
     bool NotificationServer::DismissNotification(const Notification& notification)
     {
-        return RemoveNotification(notification.replacesId, NotificationRemoveReason::Dismissed);
+        return RemoveNotification(notification.id, NotificationRemoveReason::Dismissed);
     }
 
     void NotificationServer::ClearNotifications()
     {
         for (const auto& it : _notificationsByUid | std::views::values)
         {
-            RemoveNotification(it->replacesId, NotificationRemoveReason::Dismissed);
+            RemoveNotification(it->id, NotificationRemoveReason::Dismissed);
         }
     }
 
@@ -187,7 +187,7 @@ namespace JappeStudios::JappeOS::NotificationManager
         }
 
         AddNotification(Notification{
-            .replacesId = notificationId,
+            .id = notificationId,
             .sender = sender,
             .appName = appName,
             .appIcon = appIcon,
@@ -222,27 +222,27 @@ namespace JappeStudios::JappeOS::NotificationManager
     void NotificationServer::AddNotification(Notification notification)
     {
         auto notif = std::make_shared<const Notification>(std::move(notification));
-        if (notif->replacesId == 0)
-            throw DBusException(DBUS_ERROR_FAILED, "replacesId must be more than 0");
+        if (notif->id == 0)
+            throw DBusException(DBUS_ERROR_FAILED, "id must be more than 0");
 
         // Insert notifications to maps
         auto [senderIt, senderInserted] =
-            _notificationsBySender[notif->sender].insert_or_assign(notif->replacesId, notif);
+            _notificationsBySender[notif->sender].insert_or_assign(notif->id, notif);
         auto [uidIt, uidInserted] =
-            _notificationsByUid.insert_or_assign(notif->replacesId, notif);
+            _notificationsByUid.insert_or_assign(notif->id, notif);
 
         // Fire events for added/updated notification
         if (!senderInserted || !uidInserted)
         {
             try
-            { OnNotificationUpdated(notif->replacesId); }
+            { OnNotificationUpdated(notif->id); }
             catch (const std::exception& e)
             { Log().Err("OnNotificationUpdated event handler failed: " + std::string(e.what())); }
         }
         else
         {
             try
-            { OnNotificationAdded(notif->replacesId); }
+            { OnNotificationAdded(notif->id); }
             catch (const std::exception& e)
             { Log().Err("OnNotificationAdded event handler failed: " + std::string(e.what())); }
         }
@@ -253,7 +253,7 @@ namespace JappeStudios::JappeOS::NotificationManager
             try
             {
                 RemoveNotification(
-                    _notificationsByUid.begin()->second->replacesId,
+                    _notificationsByUid.begin()->second->id,
                     NotificationRemoveReason::MaxCountReached
                 );
             }
@@ -294,7 +294,7 @@ namespace JappeStudios::JappeOS::NotificationManager
                 }
                 return G_SOURCE_REMOVE;
             },
-            new TimeoutTask(notification.replacesId, this),
+            new TimeoutTask(notification.id, this),
             [](gpointer data) {
                 delete static_cast<TimeoutTask*>(data);
             }
@@ -340,7 +340,7 @@ namespace JappeStudios::JappeOS::NotificationManager
     void NotificationServer::ArchiveNotification(const Notification& notification)
     {
         AddNotification(Notification{
-            .replacesId = notification.replacesId,
+            .id = notification.id,
             .sender = notification.sender,
             .archived = true,
             .appName = notification.appName,
