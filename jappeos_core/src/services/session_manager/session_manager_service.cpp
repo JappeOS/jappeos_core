@@ -267,7 +267,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             );
         }
 
-        StopSession(sessionId);
+        StopSession(session->id);
         Message::CreateMethodReturn(message).Send(*_conn);
     }
 
