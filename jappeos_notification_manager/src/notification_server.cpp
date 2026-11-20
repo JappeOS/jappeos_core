@@ -75,6 +75,13 @@ namespace JappeStudios::JappeOS::NotificationManager
         sig.Send(_conn);
     }
 
+    bool NotificationServer::NotificationExists(const uint32_t notificationId)
+    {
+        std::map<uint32_t, std::shared_ptr<const Notification>>::iterator it;
+        std::map<std::string, std::map<uint32_t, std::shared_ptr<const Notification>>>::iterator itSender;
+        return NotificationExistsWithIterators(notificationId, it, itSender);
+    }
+
     bool NotificationServer::DismissNotification(const uint32_t notificationId)
     {
         const auto& it = _notificationsByUid.find(notificationId);
@@ -90,9 +97,16 @@ namespace JappeStudios::JappeOS::NotificationManager
 
     void NotificationServer::ClearNotifications()
     {
-        for (const auto& it : _notificationsByUid | std::views::values)
+        std::vector<uint32_t> notificationIds;
+        for (const auto& key: _notificationsByUid | std::views::keys)
+            notificationIds.push_back(key);
+
+        for (const auto& it : notificationIds)
         {
-            RemoveNotification(it->id, NotificationRemoveReason::Dismissed);
+            try
+            { RemoveNotification(it, NotificationRemoveReason::Dismissed); }
+            catch (const std::exception& ex)
+            { Log().Err("ClearNotifications: Failed to dismiss notification: " + std::string(ex.what())); }
         }
     }
 
@@ -303,38 +317,55 @@ namespace JappeStudios::JappeOS::NotificationManager
         _notificationExpirationTasks.push_back(timeoutTask);
     }
 
-    bool NotificationServer::RemoveNotification(const uint32_t notificationId, NotificationRemoveReason reason)
+    bool NotificationServer::NotificationExistsWithIterators(
+            const uint32_t notificationId,
+            std::map<uint32_t, std::shared_ptr<const Notification>>::iterator& it,
+            std::map<std::string, std::map<uint32_t, std::shared_ptr<const Notification>>>::iterator& itSender)
     {
-        const auto& it = _notificationsByUid.find(notificationId);
+        it = _notificationsByUid.find(notificationId);
         if (it == _notificationsByUid.end())
             return false;
-        _notificationsByUid.erase(it);
 
-        const auto& itSender = _notificationsBySender.find(it->second->sender);
+        itSender = _notificationsBySender.find(it->second->sender);
         if (itSender == _notificationsBySender.end())
             return false;
 
-        const auto removed = itSender->second.erase(notificationId) != 0;
-        if (itSender->second.empty())
-            _notificationsBySender.erase(itSender);
+        const auto& itSenderObj = itSender->second.find(notificationId);
+        if (itSenderObj == itSender->second.end())
+            return false;
 
-        if (removed)
+        return true;
+    }
+
+    bool NotificationServer::RemoveNotification(const uint32_t notificationId, NotificationRemoveReason reason)
+    {
+        std::map<uint32_t, std::shared_ptr<const Notification>>::iterator it;
+        std::map<std::string, std::map<uint32_t, std::shared_ptr<const Notification>>>::iterator itSender;
+        if (!NotificationExistsWithIterators(notificationId, it, itSender))
+            return false;
+
+        ScopeGuard guard([&]
         {
-            try
-            { OnNotificationRemoved(notificationId); }
-            catch (const std::exception& e)
-            { Log().Err("OnNotificationRemoved event handler failed: " + std::string(e.what())); }
+            _notificationsByUid.erase(it);
+            itSender->second.erase(notificationId);
+            if (itSender->second.empty())
+                _notificationsBySender.erase(itSender);
+        });
 
-            auto sig = Message::CreateSignal(
-                _object.GetPath(),
-                _iface.GetName(),
-                "NotificationClosed"
-            );
-            sig.SetArgs(notificationId, static_cast<uint32_t>(reason));
-            sig.Send(_conn);
-        }
+        try
+        { OnNotificationRemoved(notificationId); }
+        catch (const std::exception& e)
+        { Log().Err("OnNotificationRemoved event handler failed: " + std::string(e.what())); }
 
-        return removed;
+        auto sig = Message::CreateSignal(
+            _object.GetPath(),
+            _iface.GetName(),
+            "NotificationClosed"
+        );
+        sig.SetArgs(notificationId, static_cast<uint32_t>(reason));
+        sig.Send(_conn);
+
+        return true;
     }
 
     void NotificationServer::ArchiveNotification(const Notification& notification)

@@ -22,6 +22,7 @@
 #include "dbus/dbus_wrapper.h"
 #include "logging/logger.h"
 #include "utils/event.h"
+#include "utils/scope_guard.h"
 
 using namespace JappeStudios::JappeOS::DaemonCore::DBus;
 using namespace JappeStudios::JappeOS::DaemonCore::Utils;
@@ -77,20 +78,94 @@ namespace JappeStudios::JappeOS::NotificationManager
     class NotificationServer
     {
     public:
+        /**
+         * @brief Gets called synchronously when a notification was added.
+         */
         Event<uint32_t> OnNotificationAdded;
+
+        /**
+         * @brief Gets called synchronously when a notification was updated.
+         */
         Event<uint32_t> OnNotificationUpdated;
+
+        /**
+         * @brief Gets called synchronously when a notification was removed.
+         * @note The notification object gets freed after this event has been handled, synchronously.
+         *       Do not use the freed notification object asynchronously after this event is fired.
+         */
         Event<uint32_t> OnNotificationRemoved;
 
         explicit NotificationServer();
         ~NotificationServer();
 
+        /**
+         * @brief Invokes an action on the specified notification.
+         * @param notificationId The ID of the notification to act on
+         * @param actionId The index of the action of the notification to act on
+         */
         void InvokeAction(uint32_t notificationId, size_t actionId) const;
+
+        /**
+         * @brief Invokes an action on the specified notification.
+         * @param notification The notification to act on
+         * @param actionId The index of the action of the notification to act on
+         */
         void InvokeAction(const Notification& notification, size_t actionId) const;
+
+        /**
+         * @brief Checks whether a notification exists based on its ID.
+         * @param notificationId The ID of the notification to check for
+         * @return Whether a notification was found
+         */
+        bool NotificationExists(uint32_t notificationId);
+
+        /**
+         * @brief Removes a notification with the reason 'Dismissed'.
+         *
+         * This method runs synchronously, and the notification is destroyed after this call.
+         * Do not access the notification object or a OnNotificationRemoved-removed notification
+         * object after calling this method.
+         *
+         * @param notificationId The ID of the notification to remove
+         * @return Whether the notification was dismissed or not
+         */
         bool DismissNotification(uint32_t notificationId);
+
+        /**
+         * @brief Removes a notification with the reason 'Dismissed'.
+         *
+         * @warning This method runs synchronously, and the notification is destroyed after this call.
+         *          Do not access the notification object or a OnNotificationRemoved-removed notification
+         *          object or its members after calling this method.
+         *
+         * @param notification The notification to remove
+         * @return Whether the notification was dismissed or not
+         */
         bool DismissNotification(const Notification& notification);
+
+        /**
+         * @brief Removes all notifications with the reason 'Dismissed'.
+         * @warning This method runs synchronously. Do not access the notification object or a
+         *          OnNotificationRemoved-removed notification object or its members after calling this method.
+         */
         void ClearNotifications();
+
+        /**
+         * @brief Gets a notification by its ID.
+         * @param notificationId The ID of the notification to return
+         * @return The notification by its ID, or `nullptr` of not found
+         */
         [[nodiscard]] std::shared_ptr<const Notification> GetNotification(uint32_t notificationId) const;
+
+        /**
+         * @return References to all notifications on the server
+         */
         [[nodiscard]] std::vector<std::shared_ptr<const Notification>> GetNotifications() const;
+
+        /**
+         * @param sender The sender name of the notifications
+         * @return References to all notifications on the server whose sender equals `sender`
+         */
         [[nodiscard]] std::vector<std::shared_ptr<const Notification>> GetNotificationsBySender(const std::string& sender) const;
 
     public:
@@ -115,6 +190,10 @@ namespace JappeStudios::JappeOS::NotificationManager
         void OnCloseNotification(const Message& message);
 
         void AddNotification(Notification notification);
+        bool NotificationExistsWithIterators(
+            uint32_t notificationId,
+            std::map<uint32_t, std::shared_ptr<const Notification>>::iterator& it,
+            std::map<std::string, std::map<uint32_t, std::shared_ptr<const Notification>>>::iterator& itSender);
         bool RemoveNotification(uint32_t notificationId, NotificationRemoveReason reason);
         void ArchiveNotification(const Notification& notification); // <-- TODO: Unused
 

@@ -18,6 +18,8 @@
 
 #include "notification_manager_service.h"
 
+#include "utils/scope_guard.h"
+
 namespace JappeStudios::JappeOS::NotificationManager
 {
 
@@ -66,9 +68,12 @@ namespace JappeStudios::JappeOS::NotificationManager
                 const auto notif = _notificationServer.GetNotification(n);
                 NULL_CHECK_VAR(notif, "notif");
                 const auto obj = GetNotification(n);
-                _notifPathToObject.erase(obj->GetObjectPath());
-                _notifIdToObject.erase(obj->GetNotification()->id);
-                std::erase(_notifIdsOrdered, obj->GetNotification()->id);
+                ScopeGuard guard([&]
+                {
+                    _notifPathToObject.erase(obj->GetObjectPath());
+                    _notifIdToObject.erase(obj->GetNotification()->id);
+                    std::erase(_notifIdsOrdered, obj->GetNotification()->id);
+                });
                 EmitNotificationRemoved(n);
             });
     }
@@ -196,8 +201,28 @@ namespace JappeStudios::JappeOS::NotificationManager
 
     void NotificationObject::OnDismiss(const Message& message) const
     {
-        _notificationServer.DismissNotification(*GetNotification());
+        if (!_notificationServer.NotificationExists(GetNotification()->id))
+            throw std::logic_error("Notification should exist since an object for it is alive");
+
+        // Send method return before dismissing notification, because dismissing a notification deletes this object.
+        // Ensure that _conn, which is owned by us, is no longer used after DismissNotification.
+        // In this case we can call the method return before dismissing because dismissing should always succeed anyway.
+        // The D-Bus caller mustn't assume that a notification has been removed as a result of calling OnDismiss
+        // and getting a reply. The caller should use the D-Bus signals and the getter method provided by [NotificationManagerService].
+        // The only disadvantage with this ordering is that DismissNotification will not propagate errors to the caller.
         Message::CreateMethodReturn(message).Send(_conn);
+        try
+        {
+            _notificationServer.DismissNotification(*GetNotification());
+        }
+        catch (const std::exception& ex)
+        {
+            Log().Err("OnDismiss: Failed to dismiss notification: " + std::string(ex.what()));
+        }
+        catch (...)
+        {
+            Log().Err("OnDismiss: Failed to dismiss notification because of an unknown exception");
+        }
     }
 
     std::vector<std::string>& NotificationObject::GetActionKeys()

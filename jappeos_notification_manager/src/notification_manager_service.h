@@ -99,6 +99,9 @@ namespace JappeStudios::JappeOS::NotificationManager
         void OnDismiss(const Message& message) const;
 
         std::vector<std::string>& GetActionKeys();
+
+    private:
+        CREATE_LOGGER("NotificationObject")
     };
 
 }
