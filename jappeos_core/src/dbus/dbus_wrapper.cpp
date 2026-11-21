@@ -20,6 +20,7 @@
 
 #include <format>
 #include <chrono>
+#include <unistd.h>
 
 namespace JappeStudios::JappeOS::JappeOSCore
 {
@@ -60,6 +61,89 @@ namespace JappeStudios::JappeOS::JappeOSCore
             }
             return out;
         }
+
+        std::string CurrentSignature(DBusMessageIter& it)
+        {
+            std::unique_ptr<char, decltype(&dbus_free)> sig(dbus_message_iter_get_signature(&it), dbus_free);
+            if (!sig)
+                throw DBusException(DBUS_ERROR_NO_MEMORY, "Cannot read D-Bus signature");
+            return sig.get();
+        }
+
+        void CopyValue(DBusMessageIter& source, DBusMessageIter& dest)
+        {
+            const int type = dbus_message_iter_get_arg_type(&source);
+            if (dbus_type_is_basic(type))
+            {
+                DBusBasicValue value{};
+                dbus_message_iter_get_basic(&source, &value);
+                if (type == DBUS_TYPE_UNIX_FD && value.fd < 0)
+                    throw DBusException(DBUS_ERROR_FAILED, "Cannot duplicate D-Bus file descriptor");
+                const bool copied = dbus_message_iter_append_basic(&dest, type, &value);
+                if (type == DBUS_TYPE_UNIX_FD)
+                    close(value.fd); // get_basic and append_basic each duplicate the descriptor.
+                if (!copied)
+                    throw DBusException(DBUS_ERROR_NO_MEMORY, "Cannot copy D-Bus value");
+                return;
+            }
+
+            DBusMessageIter child;
+            dbus_message_iter_recurse(&source, &child);
+            std::string signature;
+            if (type == DBUS_TYPE_ARRAY)
+                signature = CurrentSignature(source).substr(1); // Also works for empty arrays.
+            else if (type == DBUS_TYPE_VARIANT)
+                signature = CurrentSignature(child);
+
+            DBusMessageIter out;
+            if (!dbus_message_iter_open_container(&dest, type, signature.empty() ? nullptr : signature.c_str(), &out))
+                throw DBusException(DBUS_ERROR_NO_MEMORY, "Cannot open D-Bus container");
+            try
+            {
+                while (dbus_message_iter_get_arg_type(&child) != DBUS_TYPE_INVALID)
+                {
+                    CopyValue(child, out);
+                    dbus_message_iter_next(&child);
+                }
+            }
+            catch (...)
+            {
+                dbus_message_iter_abandon_container(&dest, &out);
+                throw;
+            }
+            if (!dbus_message_iter_close_container(&dest, &out))
+                throw DBusException(DBUS_ERROR_NO_MEMORY, "Cannot close D-Bus container");
+        }
+    }
+
+    DBusVariant::ArrayPayload::ArrayPayload(DBusMessageIter& source)
+        : message(dbus_message_new(DBUS_MESSAGE_TYPE_METHOD_RETURN), dbus_message_unref)
+    {
+        if (!message)
+            throw DBusException(DBUS_ERROR_NO_MEMORY, "Cannot store D-Bus array");
+        DBusMessageIter dest;
+        dbus_message_iter_init_append(message.get(), &dest);
+        CopyValue(source, dest);
+    }
+
+    void DBusVariant::ArrayPayload::append(DBusMessageIter& dest) const
+    {
+        DBusMessageIter source;
+        dbus_message_iter_init(message.get(), &source);
+        CopyValue(source, dest);
+    }
+
+    DBusVariant DBusVariant::ReadArray(DBusMessageIter& it)
+    {
+        DBusVariant result;
+        result._signature = CurrentSignature(it);
+        result._value = std::make_shared<ArrayPayload>(it);
+        result._append = [](DBusMessageIter& dest, const std::any& value)
+        {
+            std::any_cast<const std::shared_ptr<ArrayPayload>&>(value)->append(dest);
+        };
+        dbus_message_iter_next(&it);
+        return result;
     }
 
     // ObjectPath

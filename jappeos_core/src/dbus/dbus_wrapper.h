@@ -24,12 +24,14 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <typeindex>
 #include <typeinfo>
 #include <type_traits>
 #include <utility>
@@ -336,6 +338,9 @@ namespace JappeStudios::JappeOS::JappeOSCore
 #pragma endregion
 
     template<typename T>
+    struct DBusGetTraits;
+
+    template<typename T>
     struct DBusSetTraits;
 
     /**
@@ -368,15 +373,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
         {
             using U = std::decay_t<T>;
 
-            DBusVariant var;
-            var._signature = DBusGetSignature<U>();
-            var._value = std::forward<T>(v);
-            var._append = [](DBusMessageIter& it, const std::any& a)
-            {
-                DBusSetTraits<U>::append(it, std::any_cast<const U&>(a));
-            };
-
-            return var;
+            return makeWithSignature(DBusGetSignature<U>(), std::forward<T>(v));
         }
 
         template<typename T>
@@ -386,16 +383,60 @@ namespace JappeStudios::JappeOS::JappeOSCore
 
             DBusVariant var;
             var._signature = std::move(signature);
-            var._value = std::forward<T>(v);
-            var._append = [](DBusMessageIter& it, const std::any& a)
+            if constexpr (requires { requires DBusGetTraits<U>::type == DBUS_TYPE_ARRAY; })
             {
-                DBusSetTraits<U>::append(it, std::any_cast<const U&>(a));
-            };
+                // An array can contain move-only values, such as variants.
+                using Storage = std::shared_ptr<const U>;
+                var._value = std::make_shared<const U>(std::forward<T>(v));
+                var._append = [](DBusMessageIter& it, const std::any& a)
+                {
+                    DBusSetTraits<U>::append(it, *std::any_cast<const Storage&>(a));
+                };
+            }
+            else
+            {
+                var._value = std::forward<T>(v);
+                var._append = [](DBusMessageIter& it, const std::any& a)
+                {
+                    DBusSetTraits<U>::append(it, std::any_cast<const U&>(a));
+                };
+            }
 
             return var;
         }
 
     private:
+        friend struct DBusGetTraits<DBusVariant>;
+        static DBusVariant ReadArray(DBusMessageIter& it);
+
+        // Own the wire value so it can be forwarded or decoded after the source
+        // message is released. Keep each typed view alive for get<T>() references.
+        struct ArrayPayload
+        {
+            explicit ArrayPayload(DBusMessageIter& source);
+            void append(DBusMessageIter& dest) const;
+
+            template<typename T>
+            const T& get() const
+            {
+                std::lock_guard lock(mutex);
+                const std::type_index key(typeid(T));
+                if (const auto it = views.find(key); it != views.end())
+                    return *static_cast<const T*>(it->second.get());
+
+                DBusMessageIter it;
+                dbus_message_iter_init(message.get(), &it);
+                auto value = std::make_shared<T>(DBusGetTraits<T>::get(it));
+                views.emplace(key, value);
+                return *value;
+            }
+
+        private:
+            std::unique_ptr<DBusMessage, decltype(&dbus_message_unref)> message;
+            mutable std::mutex mutex;
+            mutable std::map<std::type_index, std::shared_ptr<const void>> views;
+        };
+
         DBusVariant() = default;
 
         std::string _signature;
@@ -436,7 +477,19 @@ namespace JappeStudios::JappeOS::JappeOSCore
     {
         using U = std::decay_t<T>;
 
-        if constexpr (isStdTuple<U>::value)
+        if constexpr (requires { requires DBusGetTraits<U>::type == DBUS_TYPE_ARRAY; })
+        {
+            if (const auto* typed = std::any_cast<std::shared_ptr<const U>>(&_value))
+                return **typed;
+            if (const auto* array = std::any_cast<std::shared_ptr<ArrayPayload>>(&_value))
+            {
+                if (_signature != DBusGetSignature<U>())
+                    throw DBusException(DBUS_ERROR_INVALID_SIGNATURE, "DBusVariant array type mismatch");
+                return (*array)->get<U>();
+            }
+            throw DBusException(DBUS_ERROR_INVALID_SIGNATURE, "DBusVariant type mismatch");
+        }
+        else if constexpr (isStdTuple<U>::value)
         {
             if (_value.type() == typeid(U))
                 return std::any_cast<const U&>(_value);
@@ -768,9 +821,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
     // ========== GET TRAITS ==========
 #pragma region GetTraits
 
-    template<typename T>
-    struct DBusGetTraits;
-
     template<>
     struct DBusGetTraits<bool>
     {
@@ -913,7 +963,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
             dbus_message_iter_recurse(&it, &sub);
             while (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID)
             {
-                out.push_back(DBusGetTraits<T>::get(sub));
+                out.insert(DBusGetTraits<T>::get(sub));
             }
 
             dbus_message_iter_next(&it);
@@ -1106,7 +1156,7 @@ namespace JappeStudios::JappeOS::JappeOSCore
                     return ReadStruct(it);
 
                 case DBUS_TYPE_ARRAY:
-                    return ReadArray(it);
+                    return DBusVariant::ReadArray(it);
 
                 default:
                     throw DBusException(
@@ -1114,51 +1164,6 @@ namespace JappeStudios::JappeOS::JappeOSCore
                         "Unsupported variant payload"
                     );
             }
-        }
-
-        static std::string GetCurrentSignature(DBusMessageIter& it)
-        {
-            char* rawSig = dbus_message_iter_get_signature(&it);
-            if (!rawSig)
-                throw DBusException(DBUS_ERROR_NO_MEMORY, "Failed to read D-Bus signature");
-
-            std::string signature(rawSig);
-            dbus_free(rawSig);
-            return signature;
-        }
-
-        static DBusVariant ReadArray(DBusMessageIter& it)
-        {
-            const std::string signature = GetCurrentSignature(it);
-
-            if (signature == "ab")
-                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<bool>>::get(it));
-
-            if (signature == "ai")
-                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<int32_t>>::get(it));
-
-            if (signature == "au")
-                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<uint32_t>>::get(it));
-
-            if (signature == "ax")
-                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<int64_t>>::get(it));
-
-            if (signature == "at")
-                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<uint64_t>>::get(it));
-
-            if (signature == "ad")
-                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<double>>::get(it));
-
-            if (signature == "as")
-                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<std::string>>::get(it));
-
-            if (signature == "ao")
-                return DBusVariant::makeWithSignature(signature, DBusGetTraits<std::vector<ObjectPath>>::get(it));
-
-            throw DBusException(
-                DBUS_ERROR_INVALID_ARGS,
-                "Unsupported variant array payload: " + signature
-            );
         }
     };
 
@@ -2173,8 +2178,8 @@ namespace JappeStudios::JappeOS::JappeOSCore
      * internally through assignment or Set(). In all cases, change
      * notification is emitted exactly once per actual value change.
      *
-     * This class is not thread-safe. All access must be serialized by
-     * the owning object.
+     * Get and Set serialize value access and change signals. The optional
+     * onChanged callback runs outside the lock and may re-enter the property.
      *
      * @tparam T C++ type of the property value. The type must be
      *           comparable with operator== and supported by the
@@ -2246,7 +2251,11 @@ namespace JappeStudios::JappeOS::JappeOSCore
          *
          * @return The current value of the property.
          */
-        T Get() const { return _value; }
+        T Get() const
+        {
+            std::lock_guard lock(_mutex);
+            return _value;
+        }
 
         /**
          * @brief Set the property value.
@@ -2260,17 +2269,21 @@ namespace JappeStudios::JappeOS::JappeOSCore
          */
         bool Set(const T& value)
         {
-            if (value == _value)
-                return false;
+            {
+                std::lock_guard lock(_mutex);
+                if (value == _value)
+                    return false;
 
-            _value = value;
-            EmitPropertiesChanged();
+                _value = value;
+                EmitPropertiesChanged();
+            }
             if (_onChanged)
                 _onChanged(value);
             return true;
         }
 
     private:
+        mutable std::mutex _mutex;
         T _value;
         std::string _name;
         std::function<void(const T&)> _onChanged;
