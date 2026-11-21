@@ -22,6 +22,7 @@
 #include <chrono>
 
 #include "../../utils/command_runner.h"
+#include "../../utils/scope_guard.h"
 #include "../network_manager/network_access_point.h"
 
 using json = nlohmann::json;
@@ -32,7 +33,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
     DriverManagerService::DriverManagerService(ServiceManager* serviceManager, Connection* conn) :
                                                Service(serviceManager, conn),
                                                _object(*_conn, GetBaseObjectPath()),
-                                               _iface(_object.CreateInterface(GetBaseInterface()))
+                                               _iface(_object.CreateInterface(GetBaseInterface())),
+                                               _currentInstalls(*_conn, _iface, "CurrentInstalls", {})
     {
         _iface.RegisterMethod("ListAvailableDrivers", [&](const auto& m) { OnListAvailableDrivers(m); });
         _iface.RegisterMethod("ListAvailableAdditionalDrivers", [&](const auto& m) { OnListAvailableAdditionalDrivers(m); });
@@ -246,12 +248,27 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         return false;
     }
 
-    bool DriverManagerService::InstallDriver(const DriverInfo& driver) const
+    bool DriverManagerService::InstallDriver(const DriverInfo& driver)
     {
-        if (!HasDeviceForDriver(driver.deviceFinder))
+        if (!HasDeviceForDriver(driver.deviceFinder) || _stopping)
             return false;
 
         Log().Info("Installing driver: " + driver.name);
+
+        // The single install worker processes one driver's packages at a time.
+        Utils::ScopeGuard clearCurrentInstall([this] {
+            try
+            {
+                _currentInstalls.Set({});
+            }
+            catch (const std::exception& e)
+            {
+                Log().Err("Failed to publish the end of the driver installation: " + std::string(e.what()));
+            }
+        });
+
+        if (!driver.packages.empty())
+            _currentInstalls.Set({{json(driver.type).get<std::string>(), driver.name}});
 
         bool anySuccess = false;
         bool allSuccess = true;

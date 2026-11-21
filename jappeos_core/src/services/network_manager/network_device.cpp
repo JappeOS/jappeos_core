@@ -51,7 +51,6 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::NetworkManager
         if (_state.Get() == state)
             return;
 
-        const auto old = _state;
         _state = state;
     }
 

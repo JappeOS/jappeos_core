@@ -80,6 +80,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         Object _object;
         Interface& _iface;
 
+        Prop<std::vector<std::tuple<std::string, std::string>>> _currentInstalls;
+
         // Populated before starting the worker; read-only thereafter.
         std::map<std::string, DriverInfo> _drivers;
         bool _newConnSubExists = false;
@@ -102,7 +104,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
 
         void ThreadFunc();
         bool TryInstallStaticDriversWithRetry();
-        bool InstallDriver(const DriverInfo& driver) const;
+        bool InstallDriver(const DriverInfo& driver);
         bool WaitForRetry();
         void CleanupStaticDrivers();
 
