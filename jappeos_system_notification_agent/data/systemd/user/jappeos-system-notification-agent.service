@@ -1,0 +1,19 @@
+[Unit]
+Description=JappeOS System Notification Agent
+PartOf=graphical-session.target
+After=graphical-session.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/jappeos_system_notification_agent/jappeos_system_notification_agent
+
+Restart=on-failure
+RestartSec=2s
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

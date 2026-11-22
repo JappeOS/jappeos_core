@@ -1,3 +1,21 @@
+/*
+ * jappeos_system_notification_agent, System notification agent for JappeOS.
+ * Copyright (C) 2026  The JappeOS team.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #include "notification_agent_service.h"
 
 #include <ranges>
@@ -9,7 +27,7 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
         _conn(DaemonCore::Daemon::GetConnection()),
         _driverManagerProxy(
             _conn,
-            "org.jappeos.Core.DriverManagerService",
+            "org.jappeos.Core",
             ObjectPath("/org/jappeos/Core/DriverManagerService"),
             InterfaceName("org.jappeos.Core.DriverManagerService"))
     {
@@ -21,21 +39,39 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
         );
     }
 
+    NotificationAgentService::~NotificationAgentService()
+    {
+        OnDriverCurrentInstallsChanged({});
+    }
+
     void NotificationAgentService::OnDriverCurrentInstallsChanged(const std::vector<std::tuple<std::string, std::string>>& properties)
     {
+        if (!properties.empty())
+        {
+            _wasInstallingDrivers = true;
+        }
+        else if (_wasInstallingDrivers)
+        {
+            _wasInstallingDrivers = false;
+            uint32_t outNotificationId;
+            TryShowNotification("Driver installation finished.", outNotificationId);
+        }
+
         std::set<std::string> leftovers;
         for (const auto& key: _driverInstallations | std::views::keys)
             leftovers.insert(key);
 
         for (const auto& property : properties)
         {
-            const auto& type = std::get<0>(property);
+            std::string type = std::get<0>(property);
             const auto& name = std::get<1>(property);
             const auto key = GetDriverKey(type, name);
 
-            if (uint32_t outNotificationId; TryShowNotification("Installing " + type + " driver named " + name, outNotificationId))
+            std::transform(type.begin(), type.end(), type.begin(), ::tolower);
+
+            if (uint32_t outNotificationId; TryShowNotification("Installing " + type + " driver: " + name, outNotificationId))
             {
-                _driverInstallations.insert_or_assign(key, outNotificationId);
+                _driverInstallations.emplace(key, outNotificationId);
                 leftovers.erase(key);
             }
         }

@@ -1,9 +1,9 @@
 # Maintainer: Jappe02 <Jappe00001@gmail.com>
 pkgbase=jappeos_core
-pkgname=('jappeos_core' 'jappeos_notification_manager')
+pkgname=('jappeos_core' 'jappeos_notification_manager' 'jappeos_system_notification_agent')
 pkgver=2.2.0
 _tag=dev-v2.2.0-1
-pkgrel=1
+pkgrel=2
 arch=('x86_64')
 url="https://github.com/JappeOS/$pkgbase"
 license=('AGPL-3.0-or-later')
@@ -45,6 +45,13 @@ build() {
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/usr
   cmake --build jappeos_notification_manager/build
+
+  # jappeos_system_notification_agent
+
+  cmake -S jappeos_system_notification_agent -B jappeos_system_notification_agent/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build jappeos_system_notification_agent/build
 }
 
 package_jappeos_core() {
@@ -82,4 +89,20 @@ package_jappeos_notification_manager() {
 
   DESTDIR="$pkgdir" cmake --install jappeos_notification_manager/build
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/jappeos_notification_manager/LICENSE"
+}
+
+package_jappeos_system_notification_agent() {
+  pkgdesc="System notification agent for JappeOS."
+  depends=(
+    'dbus'
+    'systemd'
+    'pacman'
+    'glib2'
+    "jappeos_core=$pkgver-$pkgrel"
+  )
+
+  cd "$srcdir/$pkgbase-$_tag"
+
+  DESTDIR="$pkgdir" cmake --install jappeos_system_notification_agent/build
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/jappeos_system_notification_agent/LICENSE"
 }
