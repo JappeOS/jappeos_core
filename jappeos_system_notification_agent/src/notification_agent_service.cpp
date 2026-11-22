@@ -19,6 +19,7 @@
 #include "notification_agent_service.h"
 
 #include <ranges>
+#include <algorithm>
 
 namespace JappeStudios::JappeOS::SystemNotificationAgent
 {
@@ -67,7 +68,10 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
             const auto& name = std::get<1>(property);
             const auto key = GetDriverKey(type, name);
 
-            std::transform(type.begin(), type.end(), type.begin(), ::tolower);
+            std::ranges::transform(type, type.begin(),
+                                   [](const unsigned char c) {
+                                       return static_cast<char>(std::tolower(c));
+                                   });
 
             if (uint32_t outNotificationId; TryShowNotification("Installing " + type + " driver: " + name, outNotificationId))
             {
