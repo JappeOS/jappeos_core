@@ -2,7 +2,7 @@
 pkgbase=jappeos_core
 pkgname=('jappeos_core' 'jappeos_notification_manager' 'jappeos_system_notification_agent')
 pkgver=2.2.0
-_tag=dev-v2.2.0-1
+_tag=dev-v2.2.0-2
 pkgrel=2
 arch=('x86_64')
 url="https://github.com/JappeOS/$pkgbase"
