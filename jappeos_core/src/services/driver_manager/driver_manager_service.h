@@ -81,6 +81,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         Interface& _iface;
 
         Prop<std::vector<std::tuple<std::string, std::string>>> _currentInstalls;
+        Prop<std::string> _currentInstallsFailure;
 
         // Populated before starting the worker; read-only thereafter.
         std::map<std::string, DriverInfo> _drivers;

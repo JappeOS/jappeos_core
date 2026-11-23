@@ -34,7 +34,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
                                                Service(serviceManager, conn),
                                                _object(*_conn, GetBaseObjectPath()),
                                                _iface(_object.CreateInterface(GetBaseInterface())),
-                                               _currentInstalls(*_conn, _iface, "CurrentInstalls", {})
+                                               _currentInstalls(*_conn, _iface, "CurrentInstalls", {}),
+                                               _currentInstallsFailure(*_conn, _iface, "CurrentInstallsFailure", {})
     {
         _iface.RegisterMethod("ListAvailableDrivers", [&](const auto& m) { OnListAvailableDrivers(m); });
         _iface.RegisterMethod("ListAvailableAdditionalDrivers", [&](const auto& m) { OnListAvailableAdditionalDrivers(m); });
@@ -205,6 +206,9 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
 
     bool DriverManagerService::TryInstallStaticDriversWithRetry()
     {
+        _currentInstallsFailure.Set({});
+
+        bool checkPackagesFailed = false;
         for (int attempt = 0; attempt < TRY_INSTALL_STATIC_DRIVERS_RETRY_COUNT; ++attempt)
         {
             if (!WaitForRetry())
@@ -213,16 +217,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
             try
             {
                 CheckPackages();
+                checkPackagesFailed = false;
             }
             catch (const std::exception& e)
             {
                 Log().Notice("CheckPackages failed (retrying): " + std::string(e.what()));
+                checkPackagesFailed = true;
                 continue;
             }
 
             if (_stopping)
                 return false;
 
+            bool someFailed = false;
             try
             {
                 CleanupStaticDrivers();
@@ -231,17 +238,30 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
                     if (_stopping)
                         return false;
                     if (driver.type == DriverType::Static)
-                        InstallDriver(driver);
+                        if (!InstallDriver(driver))
+                            someFailed = true;
                 }
             }
             catch (const std::exception& e)
             {
                 Log().Err("Driver installation failed: " + std::string(e.what()));
+                _currentInstallsFailure.Set("Driver installation failed. Please ensure you have a stable network connection.");
                 return false;
+            }
+
+            if (someFailed)
+            {
+                Log().Err("Driver installation failed for some drivers.");
+                _currentInstallsFailure.Set("Driver installation failed for some drivers. Please ensure you have a stable network connection.");
             }
 
             Log().Info("TryInstallStaticDriversWithRetry: Done.");
             return true;
+        }
+
+        if (checkPackagesFailed)
+        {
+            _currentInstallsFailure.Set("Driver installation failed while checking for packages. Please ensure you have a stable network connection.");
         }
 
         Log().Notice("TryInstallStaticDriversWithRetry: Max retry count reached.");

@@ -38,6 +38,13 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
                 [&](const auto& properties) { OnDriverCurrentInstallsChanged(properties); }
             )
         );
+
+        _subDriverCurrentInstallsFailureChanged = std::make_unique<SignalSubscription>(
+            _driverManagerProxy.SubscribePropertyChanged<const std::string&>(
+                "CurrentInstallsFailure",
+                [&](const auto& reason) { OnDriverCurrentInstallsFailureChanged(reason); }
+            )
+        );
     }
 
     NotificationAgentService::~NotificationAgentService()
@@ -87,12 +94,30 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
         }
     }
 
+    void NotificationAgentService::OnDriverCurrentInstallsFailureChanged(const std::string& failureReason)
+    {
+        if (failureReason.empty())
+        {
+            if (_failureNotificationId > 0)
+                [[maybe_unused]] const auto _ = TryCloseNotification(_failureNotificationId);
+            _failureNotificationId = 0;
+            return;
+        }
+
+        TryShowNotification(failureReason, _failureNotificationId, _failureNotificationId);
+    }
+
     std::string NotificationAgentService::GetDriverKey(const std::string& type, const std::string& name)
     {
         return type + ":" + name;
     }
 
     bool NotificationAgentService::TryShowNotification(const std::string& content, uint32_t& outNotificationId) const
+    {
+        return TryShowNotification(content, 0, outNotificationId);
+    }
+
+    bool NotificationAgentService::TryShowNotification(const std::string& content, const uint32_t replacesId, uint32_t& outNotificationId) const
     {
         outNotificationId = 0;
         try
@@ -106,7 +131,7 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
 
             msg.SetArgs(
                 std::string("System"),
-                static_cast<uint32_t>(0),
+                replacesId,
                 std::string(),
                 content,
                 content,

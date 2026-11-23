@@ -34,13 +34,17 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
         Connection& _conn;
         Proxy       _driverManagerProxy;
         std::unique_ptr<SignalSubscription> _subDriverCurrentInstallsChanged;
+        std::unique_ptr<SignalSubscription> _subDriverCurrentInstallsFailureChanged;
         std::unordered_map<std::string, uint32_t> _driverInstallations;
+        uint32_t _failureNotificationId = 0;
         bool _wasInstallingDrivers = false;
 
         void OnDriverCurrentInstallsChanged(const std::vector<std::tuple<std::string, std::string>>& properties);
+        void OnDriverCurrentInstallsFailureChanged(const std::string& failureReason);
         static std::string GetDriverKey(const std::string& type, const std::string& name);
 
         bool TryShowNotification(const std::string& content, uint32_t& outNotificationId) const;
+        bool TryShowNotification(const std::string& content, uint32_t replacesId, uint32_t& outNotificationId) const;
         bool TryCloseNotification(uint32_t notificationId) const;
 
     private:

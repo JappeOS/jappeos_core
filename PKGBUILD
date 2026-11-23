@@ -1,9 +1,9 @@
 # Maintainer: Jappe02 <Jappe00001@gmail.com>
 pkgbase=jappeos_core
 pkgname=('jappeos_core' 'jappeos_notification_manager' 'jappeos_system_notification_agent')
-pkgver=2.2.1
+pkgver=2.3.0
 _tag=dev-v2.2.1-2
-pkgrel=2
+pkgrel=1
 arch=('x86_64')
 url="https://github.com/JappeOS/$pkgbase"
 license=('AGPL-3.0-or-later')

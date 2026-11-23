@@ -3,5 +3,6 @@
 <node>
   <interface name="org.jappeos.Core.DriverManagerService">
     <property name="CurrentInstalls" type="a(ss)" access="read"/>
+    <property name="CurrentInstallsFailure" type="s" access="read"/>
   </interface>
 </node>
