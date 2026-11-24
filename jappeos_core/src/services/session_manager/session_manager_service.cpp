@@ -466,7 +466,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             .controlFd = controlFd,
             .seat = seat,
             .vtNumber = vtNumber,
-            .privilegedClientProcesses = {}
+            .privilegedClientProcesses = {},
+            .isGreeter = isLoginSession
         };
 
         ScopeGuard guard1([&]
@@ -914,6 +915,19 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         if (session.startJobs.empty())
         {
+            if (!session.isGreeter && !session.graphicalSessionStarted)
+            {
+                try
+                {
+                    StartGraphicalSession(session);
+                }
+                catch (const std::exception& e)
+                {
+                    Log().Err("Failed to start graphical session: " + std::string(e.what()));
+                    StopSession(sessionId);
+                }
+                return;
+            }
             session.starting = false;
             RefreshSessionState(sessionId);
         }
@@ -1013,7 +1027,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         ));
 
         properties.emplace_back("ExecStart", DBusVariant::make(execStart));
-        properties.emplace_back("Type",      DBusVariant::make(std::string("simple")));
+
+        // Only the desktop implements sd_notify. Its start job completes at READY=1.
+        properties.emplace_back("Type", DBusVariant::make(std::string(isLoginSession ? "simple" : "notify")));
+        if (!isLoginSession)
+            properties.emplace_back("NotifyAccess", DBusVariant::make(std::string("main")));
 
         msg1.SetArgs(
             outServiceName,            // name
@@ -1077,6 +1095,51 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         const auto reply2 = msg2.SendWithReply(_sessions.at(sessionId).manager->GetConnection());
         _sessions.at(sessionId).startJobs.push_back(std::get<0>(reply2.GetArgs<ObjectPath>()).ToString());
+    }
+
+    void SessionManagerService::StartGraphicalSession(SessionInfo& session)
+    {
+        // The desktop must publish its display environment to the user manager
+        // before READY=1. Never guess the compositor's Wayland socket name here.
+        auto message = Message::CreateMethodCall(
+            "org.freedesktop.systemd1",
+            ObjectPath("/org/freedesktop/systemd1"),
+            InterfaceName("org.freedesktop.systemd1.Manager"),
+            "StartUnit"
+        );
+        message.SetArgs(std::string("graphical-session.target"), std::string("replace"));
+
+        const auto reply = message.SendWithReply(session.manager->GetConnection());
+        session.graphicalSessionStarted = true;
+        session.startJobs.push_back(std::get<0>(reply.GetArgs<ObjectPath>()).ToString());
+    }
+
+    void SessionManagerService::StopGraphicalSession(SessionInfo& session)
+    {
+        if (!session.graphicalSessionStarted)
+            return;
+
+        // User targets are shared across seats and sessions of the same UID.
+        const bool anotherSession = std::ranges::any_of(_sessions, [&](const auto& entry)
+        {
+            return entry.first != session.id
+                && entry.second.uid == session.uid
+                && entry.second.graphicalSessionStarted;
+        });
+
+        if (!anotherSession)
+        {
+            auto message = Message::CreateMethodCall(
+                "org.freedesktop.systemd1",
+                ObjectPath("/org/freedesktop/systemd1"),
+                InterfaceName("org.freedesktop.systemd1.Manager"),
+                "StopUnit"
+            );
+            message.SetArgs(std::string("graphical-session.target"), std::string("replace"));
+            message.SendWithReplyIgnore(session.manager->GetConnection());
+        }
+
+        session.graphicalSessionStarted = false;
     }
 
     void SessionManagerService::StartInstallerForSession(const SessionInfo& session) const
@@ -1168,6 +1231,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         const auto& connection = it->second.manager->GetConnection();
 
+        try
+        {
+            StopGraphicalSession(it->second);
+        }
+        catch (const std::exception& e)
+        {
+            Log().Warn("Could not stop graphical session: " + std::string(e.what()));
+        }
+
         // Explicitly stop all units, including a partially completed startup.
         // Keep trying if one unit never existed or has already been collected.
         for (const auto& name : {"jappeos-installer@" + sessionId + ".service",
@@ -1179,7 +1251,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                     "org.freedesktop.systemd1",
                     ObjectPath("/org/freedesktop/systemd1"),
                     InterfaceName("org.freedesktop.systemd1.Manager"),
-                    "StopUnit");
+                    "StopUnit"
+                );
 
                 message.SetArgs(name, std::string("replace"));
                 message.SendWithReplyIgnore(connection);

@@ -51,6 +51,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         guint              installerSource = 0;
         std::shared_ptr<Utils::DBusPeer> manager;
         ObjectPath         unitPath;
+        bool               isGreeter = false;
+        bool               graphicalSessionStarted = false;
         bool               starting = true;
         std::vector<std::string> startJobs;
     };
@@ -125,6 +127,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
                                        const std::string& sessionId,
                                        const std::string& seat,
                                        std::string& outServiceName);
+        void StartGraphicalSession(SessionInfo& session);
+        void StopGraphicalSession(SessionInfo& session);
         void StartInstallerForSession(const SessionInfo& session) const; // <-- TODO: In the future, start from installer service, by listening to session service
         void ActivateLogindSession(const std::string& sessionId, const std::string& seat) const;
         void TerminateUserSessionProcesses(const std::string& sessionId);

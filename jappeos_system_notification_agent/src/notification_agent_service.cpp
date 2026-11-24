@@ -38,12 +38,18 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
                 [&](const auto& properties) { OnDriverCurrentInstallsChanged(properties); }
             )
         );
+        OnDriverCurrentInstallsChanged(
+            _driverManagerProxy.GetProperty<const std::vector<std::tuple<std::string, std::string>>&>("CurrentInstalls")
+        );
 
         _subDriverCurrentInstallsFailureChanged = std::make_unique<SignalSubscription>(
             _driverManagerProxy.SubscribePropertyChanged<const std::string&>(
                 "CurrentInstallsFailure",
                 [&](const auto& reason) { OnDriverCurrentInstallsFailureChanged(reason); }
             )
+        );
+        OnDriverCurrentInstallsFailureChanged(
+            _driverManagerProxy.GetProperty<const std::string&>("CurrentInstallsFailure")
         );
     }
 
