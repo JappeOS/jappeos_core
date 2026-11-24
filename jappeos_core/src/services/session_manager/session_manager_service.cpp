@@ -329,6 +329,20 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
             return;
         }
 
+        // Live media has no useful greeter fallback. Do not repeatedly recreate
+        // a failed desktop and activate its VT, making console recovery impossible.
+        if (_isLiveEnvironment)
+        {
+            Log().Err("Live desktop ended or failed to start; automatic login will not be retried. "
+                      "Returning to TTY1. Inspect journalctl -b before restarting jappeos_core.");
+            const int ttyFd = ActivateTTY(1);
+            if (ttyFd < 0)
+                Log().Warn("Could not activate recovery TTY1");
+            else
+                close(ttyFd);
+            return;
+        }
+
         std::string sessionId;
         std::string _0;
         uid_t _1;
@@ -609,6 +623,12 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     bool SessionManagerService::TryAutologinSession()
     {
+        // Autologin is a startup policy, not a session restart policy. Set this
+        // before creation so both synchronous and asynchronous failures consume it.
+        if (_autologinAttempted)
+            return false;
+        _autologinAttempted = true;
+
         try
         {
             // TODO: This is a temp-fix because AccountManager tries to create a GDM config file when enabling autologin.
@@ -908,7 +928,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
         if (result != "done")
         {
-            Log().Err("Failed to start " + unit + ": " + result);
+            Log().Err("Session " + sessionId + " failed to start " + unit + ": " + result);
             StopSession(sessionId);
             return;
         }

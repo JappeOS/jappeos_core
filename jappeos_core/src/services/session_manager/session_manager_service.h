@@ -89,6 +89,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         std::string _greeterSessionID;
         bool        _isGreeterActive = false;
         bool        _isLiveEnvironment;
+        bool        _autologinAttempted = false;
 
         // D-Bus interface
 
