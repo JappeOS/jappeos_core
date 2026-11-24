@@ -1099,15 +1099,31 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     void SessionManagerService::StartGraphicalSession(SessionInfo& session)
     {
-        // The desktop must publish its display environment to the user manager
-        // before READY=1. Never guess the compositor's Wayland socket name here.
+        // The desktop publishes its display environment before READY=1.
+        // graphical-session.target refuses direct starts: pull it in through a
+        // session-owned target instead. BindsTo + After also tears this target
+        // down if the compositor exits, even without core performing cleanup.
+        const std::vector<std::string> dependencies{
+            session.scopeName, "graphical-session.target"
+        };
+        std::vector<std::tuple<std::string, DBusVariant>> properties;
+        properties.emplace_back("Description", DBusVariant::make(std::string("JappeOS graphical session")));
+        properties.emplace_back("BindsTo", DBusVariant::make(dependencies));
+        properties.emplace_back("After", DBusVariant::make(dependencies));
+
         auto message = Message::CreateMethodCall(
             "org.freedesktop.systemd1",
             ObjectPath("/org/freedesktop/systemd1"),
             InterfaceName("org.freedesktop.systemd1.Manager"),
-            "StartUnit"
+            "StartTransientUnit"
         );
-        message.SetArgs(std::string("graphical-session.target"), std::string("replace"));
+
+        message.SetArgs(
+            "jappeos-session@" + session.id + ".target",
+            std::string("replace"),
+            properties,
+            std::vector<std::tuple<std::string, std::vector<std::tuple<std::string, DBusVariant>>>>{}
+        );
 
         const auto reply = message.SendWithReply(session.manager->GetConnection());
         session.graphicalSessionStarted = true;
@@ -1119,25 +1135,18 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
         if (!session.graphicalSessionStarted)
             return;
 
-        // User targets are shared across seats and sessions of the same UID.
-        const bool anotherSession = std::ranges::any_of(_sessions, [&](const auto& entry)
-        {
-            return entry.first != session.id
-                && entry.second.uid == session.uid
-                && entry.second.graphicalSessionStarted;
-        });
+        // Stop only our session's dependency holder. The shared graphical target
+        // uses StopWhenUnneeded=yes, so systemd retains it for other sessions
+        // (including sessions managed by another desktop) until they also stop.
+        auto message = Message::CreateMethodCall(
+            "org.freedesktop.systemd1",
+            ObjectPath("/org/freedesktop/systemd1"),
+            InterfaceName("org.freedesktop.systemd1.Manager"),
+            "StopUnit"
+        );
 
-        if (!anotherSession)
-        {
-            auto message = Message::CreateMethodCall(
-                "org.freedesktop.systemd1",
-                ObjectPath("/org/freedesktop/systemd1"),
-                InterfaceName("org.freedesktop.systemd1.Manager"),
-                "StopUnit"
-            );
-            message.SetArgs(std::string("graphical-session.target"), std::string("replace"));
-            message.SendWithReplyIgnore(session.manager->GetConnection());
-        }
+        message.SetArgs("jappeos-session@" + session.id + ".target", std::string("replace"));
+        message.SendWithReplyIgnore(session.manager->GetConnection());
 
         session.graphicalSessionStarted = false;
     }
