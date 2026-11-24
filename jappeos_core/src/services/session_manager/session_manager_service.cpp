@@ -1119,31 +1119,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::SessionManager
 
     void SessionManagerService::StartGraphicalSession(SessionInfo& session)
     {
-        // The desktop publishes its display environment before READY=1.
-        // graphical-session.target refuses direct starts: pull it in through a
-        // session-owned target instead. BindsTo + After also tears this target
-        // down if the compositor exits, even without core performing cleanup.
-        const std::vector<std::string> dependencies{
-            session.scopeName, "graphical-session.target"
-        };
-        std::vector<std::tuple<std::string, DBusVariant>> properties;
-        properties.emplace_back("Description", DBusVariant::make(std::string("JappeOS graphical session")));
-        properties.emplace_back("BindsTo", DBusVariant::make(dependencies));
-        properties.emplace_back("After", DBusVariant::make(dependencies));
-
+        // Targets cannot be transient. Start the installed template only after
+        // desktop readiness; it pulls in the passive graphical-session.target.
         auto message = Message::CreateMethodCall(
             "org.freedesktop.systemd1",
             ObjectPath("/org/freedesktop/systemd1"),
             InterfaceName("org.freedesktop.systemd1.Manager"),
-            "StartTransientUnit"
+            "StartUnit"
         );
-
-        message.SetArgs(
-            "jappeos-session@" + session.id + ".target",
-            std::string("replace"),
-            properties,
-            std::vector<std::tuple<std::string, std::vector<std::tuple<std::string, DBusVariant>>>>{}
-        );
+        message.SetArgs("jappeos-session@" + session.id + ".target", std::string("replace"));
 
         const auto reply = message.SendWithReply(session.manager->GetConnection());
         session.graphicalSessionStarted = true;

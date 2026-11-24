@@ -236,6 +236,10 @@ install(DIRECTORY data/systemd/system/
         FILES_MATCHING PATTERN "*.service"
 )
 
+install(DIRECTORY data/systemd/user/
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/systemd/user"
+)
+
 install(DIRECTORY data/pam.d/
         DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/pam.d"
 )

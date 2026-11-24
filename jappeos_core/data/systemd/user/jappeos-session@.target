@@ -1,0 +1,6 @@
+[Unit]
+Description=JappeOS graphical session %i
+# Bind each instance to its desktop and retain the shared graphical target
+# until all graphical session targets have stopped.
+BindsTo=session@%i.service graphical-session.target
+After=session@%i.service graphical-session.target
