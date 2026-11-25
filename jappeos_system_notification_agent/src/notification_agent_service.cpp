@@ -27,30 +27,25 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
     NotificationAgentService::NotificationAgentService() :
         _conn(DaemonCore::Daemon::GetConnection()),
         _driverManagerProxy(
-            _conn,
+            DaemonCore::Daemon::TryGetConnectionOnBus(DBUS_BUS_SYSTEM),
             "org.jappeos.Core",
             ObjectPath("/org/jappeos/Core/DriverManagerService"),
             InterfaceName("org.jappeos.Core.DriverManagerService"))
     {
+        // Subscribe before reading snapshots so subsequent updates are not lost.
         _subDriverCurrentInstallsChanged = std::make_unique<SignalSubscription>(
-            _driverManagerProxy.SubscribePropertyChanged<const std::vector<std::tuple<std::string, std::string>>&>(
+            _driverManagerProxy.SubscribePropertyChanged<DriverInstallations>(
                 "CurrentInstalls",
-                [&](const auto& properties) { OnDriverCurrentInstallsChanged(properties); }
-            )
-        );
-        OnDriverCurrentInstallsChanged(
-            _driverManagerProxy.GetProperty<const std::vector<std::tuple<std::string, std::string>>&>("CurrentInstalls")
-        );
-
+                [this](const auto& installs) { OnDriverCurrentInstallsChanged(installs); }));
         _subDriverCurrentInstallsFailureChanged = std::make_unique<SignalSubscription>(
-            _driverManagerProxy.SubscribePropertyChanged<const std::string&>(
+            _driverManagerProxy.SubscribePropertyChanged<std::string>(
                 "CurrentInstallsFailure",
-                [&](const auto& reason) { OnDriverCurrentInstallsFailureChanged(reason); }
-            )
-        );
+                [this](const auto& reason) { OnDriverCurrentInstallsFailureChanged(reason); }));
+
+        OnDriverCurrentInstallsChanged(
+            _driverManagerProxy.GetProperty<DriverInstallations>("CurrentInstalls"));
         OnDriverCurrentInstallsFailureChanged(
-            _driverManagerProxy.GetProperty<const std::string&>("CurrentInstallsFailure")
-        );
+            _driverManagerProxy.GetProperty<std::string>("CurrentInstallsFailure"));
     }
 
     NotificationAgentService::~NotificationAgentService()

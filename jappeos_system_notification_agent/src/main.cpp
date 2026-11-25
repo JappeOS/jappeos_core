@@ -23,8 +23,5 @@ using namespace JappeStudios::JappeOS::DaemonCore;
 
 CREATE_DAEMON(
     [] { return new JappeStudios::JappeOS::SystemNotificationAgent::NotificationAgentService(); },
-    DaemonDBusConfig(
-        ([] { return new DBus::Connection(DBUS_BUS_SESSION); }),
-        "org.jappeos.NotificationAgent"
-    )
+    DaemonDBusConfig::Session("org.jappeos.NotificationAgent")
 );

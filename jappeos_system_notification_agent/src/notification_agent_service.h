@@ -31,8 +31,10 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
         ~NotificationAgentService();
 
     private:
+        using DriverInstallations = std::vector<std::tuple<std::string, std::string>>;
+
         Connection& _conn;
-        Proxy       _driverManagerProxy;
+        Proxy _driverManagerProxy;
         std::unique_ptr<SignalSubscription> _subDriverCurrentInstallsChanged;
         std::unique_ptr<SignalSubscription> _subDriverCurrentInstallsFailureChanged;
         std::unordered_map<std::string, uint32_t> _driverInstallations;
