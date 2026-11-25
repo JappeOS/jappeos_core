@@ -1,7 +1,7 @@
 # Maintainer: Jappe02 <Jappe00001@gmail.com>
 pkgbase=jappeos_core
 pkgname=('jappeos_core' 'jappeos_notification_manager' 'jappeos_system_notification_agent')
-pkgver=2.3.5
+pkgver=2.4.0
 _tag=dev-v2.3.5-1
 pkgrel=1
 arch=('x86_64')

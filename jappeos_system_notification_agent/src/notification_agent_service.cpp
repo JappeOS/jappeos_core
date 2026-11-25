@@ -41,11 +41,17 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
             _driverManagerProxy.SubscribePropertyChanged<std::string>(
                 "CurrentInstallsFailure",
                 [this](const auto& reason) { OnDriverCurrentInstallsFailureChanged(reason); }));
+        _subDriverInstallationWorkInProgress = std::make_unique<SignalSubscription>(
+            _driverManagerProxy.SubscribePropertyChanged<bool>(
+                "InstallationWorkInProgress",
+                [this](const auto& state) { OnDriverInstallationWorkInProgressChanged(state); }));
 
         OnDriverCurrentInstallsChanged(
             _driverManagerProxy.GetProperty<DriverInstallations>("CurrentInstalls"));
         OnDriverCurrentInstallsFailureChanged(
             _driverManagerProxy.GetProperty<std::string>("CurrentInstallsFailure"));
+        OnDriverInstallationWorkInProgressChanged(
+            _driverManagerProxy.GetProperty<bool>("InstallationWorkInProgress"));
     }
 
     NotificationAgentService::~NotificationAgentService()
@@ -56,15 +62,7 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
     void NotificationAgentService::OnDriverCurrentInstallsChanged(const std::vector<std::tuple<std::string, std::string>>& properties)
     {
         if (!properties.empty())
-        {
             _wasInstallingDrivers = true;
-        }
-        else if (_wasInstallingDrivers)
-        {
-            _wasInstallingDrivers = false;
-            uint32_t outNotificationId;
-            TryShowNotification("Driver installation finished.", outNotificationId);
-        }
 
         std::set<std::string> leftovers;
         for (const auto& key: _driverInstallations | std::views::keys)
@@ -106,6 +104,15 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
         }
 
         TryShowNotification(failureReason, _failureNotificationId, _failureNotificationId);
+    }
+
+    void NotificationAgentService::OnDriverInstallationWorkInProgressChanged(const bool& value) const
+    {
+        if (value || !_wasInstallingDrivers)
+            return;
+
+        uint32_t outNotificationId;
+        TryShowNotification("Driver installation finished.", outNotificationId);
     }
 
     std::string NotificationAgentService::GetDriverKey(const std::string& type, const std::string& name)

@@ -35,7 +35,8 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
                                                _object(*_conn, GetBaseObjectPath()),
                                                _iface(_object.CreateInterface(GetBaseInterface())),
                                                _currentInstalls(*_conn, _iface, "CurrentInstalls", {}),
-                                               _currentInstallsFailure(*_conn, _iface, "CurrentInstallsFailure", {})
+                                               _currentInstallsFailure(*_conn, _iface, "CurrentInstallsFailure", {}),
+                                               _installationWorkInProgress(*_conn, _iface, "InstallationWorkInProgress", false)
     {
         _iface.RegisterMethod("ListAvailableDrivers", [&](const auto& m) { OnListAvailableDrivers(m); });
         _iface.RegisterMethod("ListAvailableAdditionalDrivers", [&](const auto& m) { OnListAvailableAdditionalDrivers(m); });
@@ -207,6 +208,11 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
     bool DriverManagerService::TryInstallStaticDriversWithRetry()
     {
         _currentInstallsFailure.Set({});
+        _installationWorkInProgress.Set(true);
+
+        Utils::ScopeGuard workInProgressGuard(
+            [&] { _installationWorkInProgress.Set(false); }
+        );
 
         bool checkPackagesFailed = false;
         for (int attempt = 0; attempt < TRY_INSTALL_STATIC_DRIVERS_RETRY_COUNT; ++attempt)
@@ -238,7 +244,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
                     if (_stopping)
                         return false;
                     if (driver.type == DriverType::Static)
-                        if (!InstallDriver(driver))
+                        if (InstallDriver(driver) == DriverInstallResult::Failed)
                             someFailed = true;
                 }
             }
@@ -268,10 +274,13 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         return false;
     }
 
-    bool DriverManagerService::InstallDriver(const DriverInfo& driver)
+    DriverInstallResult DriverManagerService::InstallDriver(const DriverInfo& driver)
     {
-        if (!HasDeviceForDriver(driver.deviceFinder) || _stopping)
-            return false;
+        if (!HasDeviceForDriver(driver.deviceFinder))
+            return DriverInstallResult::Skipped;
+
+        if (_stopping)
+            return DriverInstallResult::Canceled;
 
         Log().Info("Installing driver: " + driver.name);
 
@@ -295,7 +304,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         for (const auto& pkg : driver.packages)
         {
             if (_stopping)
-                return false;
+                return DriverInstallResult::Canceled;
 
             try
             {
@@ -317,15 +326,17 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         if (!anySuccess)
         {
             Log().Err("Failed to install driver: " + driver.name);
-            return false;
+            return DriverInstallResult::Failed;
         }
 
         if (!allSuccess)
+        {
             Log().Notice("Driver was partially installed (missing packages): " + driver.name);
-        else
-            Log().Notice("Driver was installed successfully: " + driver.name);
+            return DriverInstallResult::PartialSuccess;
+        }
 
-        return true;
+        Log().Notice("Driver was installed successfully: " + driver.name);
+        return DriverInstallResult::Success;
     }
 
     bool DriverManagerService::WaitForRetry()

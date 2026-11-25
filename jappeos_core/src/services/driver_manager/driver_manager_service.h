@@ -40,6 +40,15 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
         {DriverType::Additional, "Additional"},
     })
 
+    enum class DriverInstallResult
+    {
+        Skipped,
+        Failed,
+        Canceled,
+        PartialSuccess,
+        Success,
+    };
+
     // TODO: Implement non-static driver handling
     class DriverManagerService : public Service
     {
@@ -82,6 +91,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
 
         Prop<std::vector<std::tuple<std::string, std::string>>> _currentInstalls;
         Prop<std::string> _currentInstallsFailure;
+        Prop<bool> _installationWorkInProgress;
 
         // Populated before starting the worker; read-only thereafter.
         std::map<std::string, DriverInfo> _drivers;
@@ -105,7 +115,7 @@ namespace JappeStudios::JappeOS::JappeOSCore::Services::DriverManager
 
         void ThreadFunc();
         bool TryInstallStaticDriversWithRetry();
-        bool InstallDriver(const DriverInfo& driver);
+        DriverInstallResult InstallDriver(const DriverInfo& driver);
         bool WaitForRetry();
         void CleanupStaticDrivers();
 
