@@ -18,6 +18,7 @@
 
 #pragma once
 #include "daemon.h"
+#include "notification_agent.h"
 #include "logging/logger.h"
 
 using namespace JappeStudios::JappeOS::DaemonCore::DBus;
@@ -27,29 +28,27 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
     class NotificationAgentService : public DaemonCore::DaemonClass
     {
     public:
-        explicit NotificationAgentService();
-        ~NotificationAgentService();
+        NotificationAgentService();
 
     private:
-        using DriverInstallations = std::vector<std::tuple<std::string, std::string>>;
-
         Connection& _conn;
-        Proxy _driverManagerProxy;
-        std::unique_ptr<SignalSubscription> _subDriverCurrentInstallsChanged;
-        std::unique_ptr<SignalSubscription> _subDriverCurrentInstallsFailureChanged;
-        std::unique_ptr<SignalSubscription> _subDriverInstallationWorkInProgress;
-        std::unordered_map<std::string, uint32_t> _driverInstallations;
-        uint32_t _failureNotificationId = 0;
-        bool _wasInstallingDrivers = false;
+        std::vector<std::unique_ptr<NotificationAgent>> _notificationAgents;
 
-        void OnDriverCurrentInstallsChanged(const std::vector<std::tuple<std::string, std::string>>& properties);
-        void OnDriverCurrentInstallsFailureChanged(const std::string& failureReason);
-        void OnDriverInstallationWorkInProgressChanged(const bool& value) const;
-        static std::string GetDriverKey(const std::string& type, const std::string& name);
-
-        bool TryShowNotification(const std::string& content, uint32_t& outNotificationId) const;
-        bool TryShowNotification(const std::string& content, uint32_t replacesId, uint32_t& outNotificationId) const;
-        bool TryCloseNotification(uint32_t notificationId) const;
+        template<typename T>
+        void Register()
+        {
+            std::unique_ptr<T> instance;
+            try
+            {
+                instance = std::make_unique<T>();
+            }
+            catch (const std::exception& e)
+            {
+                Log().Warn("Failed to register notification agent debugName='" + GET_AGENT_NAME(T) + "': " + e.what());
+            }
+            _notificationAgents.push_back(std::move(instance));
+            Log().Debug("Registered notification agent: " + GET_AGENT_NAME(T));
+        }
 
     private:
         CREATE_LOGGER("NotificationAgentService")

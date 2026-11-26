@@ -10,7 +10,7 @@ include(FetchContent)
 FetchContent_Declare(
         jappeos_daemon_core
         GIT_REPOSITORY https://github.com/JappeOS/jappeos_daemon_core.git
-        GIT_TAG main-v1.4.0-1
+        GIT_TAG main-v1.5.0-1
 )
 FetchContent_MakeAvailable(jappeos_daemon_core)
 
@@ -18,6 +18,14 @@ set(JAPPEOS_SYSTEM_NOTIFICATION_AGENT_SOURCES
         src/main.cpp
         src/notification_agent_service.cpp
         src/notification_agent_service.h
+        src/notification_agent.cpp
+        src/notification_agent.h
+        src/service_watcher.cpp
+        src/service_watcher.h
+        src/agents/driver_manager_agent.cpp
+        src/agents/driver_manager_agent.h
+        src/agents/power_manager_agent.cpp
+        src/agents/power_manager_agent.h
 )
 
 function(jappeos_configure_target target_name)

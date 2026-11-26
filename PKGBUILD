@@ -1,7 +1,7 @@
 # Maintainer: Jappe02 <Jappe00001@gmail.com>
 pkgbase=jappeos_core
 pkgname=('jappeos_core' 'jappeos_notification_manager' 'jappeos_system_notification_agent')
-pkgver=2.4.0
+pkgver=2.5.0
 _tag=dev-v2.4.0-1
 pkgrel=1
 arch=('x86_64')
@@ -99,6 +99,7 @@ package_jappeos_system_notification_agent() {
     'pacman'
     'glib2'
     "jappeos_core=$pkgver-$pkgrel"
+    "jappeos_notification_manager=$pkgver-$pkgrel"
   )
 
   cd "$srcdir/$pkgbase-$_tag"
