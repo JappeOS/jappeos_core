@@ -21,6 +21,8 @@
 namespace JappeStudios::JappeOS::SystemNotificationAgent
 {
 
+    const std::string NotificationAgent::DEFAULT_NOTIFICATION_ICON = "material:memory";
+
     NotificationAgent::NotificationAgent(Proxy proxy)
                 : _conn(DaemonCore::Daemon::GetConnection()), _proxy(std::move(proxy)) {}
 
@@ -76,11 +78,20 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
 
     bool NotificationAgent::TryShowNotification(
         const std::string& summary,
+        const std::string& icon,
+        uint32_t& outNotificationId) const noexcept
+    {
+        return TryShowNotification(summary, icon, 0, outNotificationId);
+    }
+
+    bool NotificationAgent::TryShowNotification(
+        const std::string& summary,
         const uint32_t replacesId,
         uint32_t& outNotificationId) const noexcept
     {
         return TryShowNotification(
             summary,
+            {},
             replacesId,
             NOTIFICATION_EXPIRES_NEVER,
             outNotificationId
@@ -89,6 +100,22 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
 
     bool NotificationAgent::TryShowNotification(
         const std::string& summary,
+        const std::string& icon,
+        const uint32_t replacesId,
+        uint32_t& outNotificationId) const noexcept
+    {
+        return TryShowNotification(
+            summary,
+            icon,
+            replacesId,
+            NOTIFICATION_EXPIRES_NEVER,
+            outNotificationId
+        );
+    }
+
+    bool NotificationAgent::TryShowNotification(
+        const std::string& summary,
+        const std::string& icon,
         const uint32_t replacesId,
         const int32_t expireTimeMillis,
         uint32_t& outNotificationId) const noexcept
@@ -108,7 +135,7 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
             msg.SetArgs(
                 std::string("System"),
                 replacesId,
-                std::string(),
+                icon.empty() ? DEFAULT_NOTIFICATION_ICON : icon,
                 summary,
                 std::string(),
                 std::vector<std::string>(),

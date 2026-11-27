@@ -89,18 +89,21 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent::Agents
             case 3:
                 TryShowNotification(
                     "Your battery is low. Please connect a charger soon.",
+                    "material:battery_1_bar",
                     _currentNotificationId,
                     _currentNotificationId);
                 break;
             case 4:
                 TryShowNotification(
                     "Your battery is critically low. Please save your work or connect a charger.",
+                    "material:battery_alert",
                     _currentNotificationId,
                     _currentNotificationId);
                 break;
             case 5:
                 TryShowNotification(
                     "Your battery is critically low, please save your work or connect a charger. The device will shut down shortly.",
+                    "material:battery_alert",
                     _currentNotificationId,
                     _currentNotificationId);
                 break;

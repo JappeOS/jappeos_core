@@ -62,7 +62,6 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent::Agents
 
     private:
         CREATE_LOGGER(CURR_AGENT_NAME)
-
         static std::string GetDriverKey(const std::string& type, const std::string& name);
     };
 }

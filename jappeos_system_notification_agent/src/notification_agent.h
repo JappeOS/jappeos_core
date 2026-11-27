@@ -53,10 +53,20 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
         bool TryShowNotification(const std::string& summary, uint32_t& outNotificationId) const noexcept;
         bool TryShowNotification(
             const std::string& summary,
+            const std::string& icon,
+            uint32_t& outNotificationId) const noexcept;
+        bool TryShowNotification(
+            const std::string& summary,
             uint32_t replacesId,
             uint32_t& outNotificationId) const noexcept;
         bool TryShowNotification(
             const std::string& summary,
+            const std::string& icon,
+            uint32_t replacesId,
+            uint32_t& outNotificationId) const noexcept;
+        bool TryShowNotification(
+            const std::string& summary,
+            const std::string& icon,
             uint32_t replacesId,
             int32_t expireTimeMillis,
             uint32_t& outNotificationId) const noexcept;
@@ -66,6 +76,8 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent
         std::string _notificationOwner;
         std::unique_ptr<ServiceWatcher> _notificationWatcher;
 
+    private:
+        static const std::string DEFAULT_NOTIFICATION_ICON;
         CREATE_LOGGER("NotificationAgent")
     };
 }
