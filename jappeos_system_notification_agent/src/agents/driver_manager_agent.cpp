@@ -90,10 +90,10 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent::Agents
         const auto properties = _proxy.GetAllProperties();
         const auto installs = properties.at("CurrentInstalls").get<DriverInstallations>();
         const auto failure = properties.at("CurrentInstallsFailure").get<std::string>();
-        const auto working = properties.at("InstallationWorkInProgress").get<bool>();
+        //const auto working = properties.at("InstallationWorkInProgress").get<bool>();
         OnCurrentInstallsChanged(installs);
         OnCurrentInstallsFailureChanged(failure);
-        _wasInstallingDrivers = working;
+        //_wasInstallingDrivers = working;
     }
 
     void DriverManagerAgent::OnCurrentInstallsChanged(const std::vector<std::tuple<std::string, std::string>>& properties)
@@ -160,13 +160,7 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent::Agents
 
     void DriverManagerAgent::OnInstallationWorkInProgressChanged(const bool value)
     {
-        if (value)
-        {
-            _wasInstallingDrivers = true;
-            return;
-        }
-
-        if (!_wasInstallingDrivers)
+        if (value || !_wasInstallingDrivers)
             return;
 
         _wasInstallingDrivers = false;
