@@ -139,6 +139,7 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent::Agents
         }
     }
 
+    // Called before OnInstallationWorkInProgressChanged
     void DriverManagerAgent::OnCurrentInstallsFailureChanged(const std::string& failureReason)
     {
         _failureReason = failureReason;
@@ -160,7 +161,7 @@ namespace JappeStudios::JappeOS::SystemNotificationAgent::Agents
 
     void DriverManagerAgent::OnInstallationWorkInProgressChanged(const bool value)
     {
-        if (value || !_wasInstallingDrivers)
+        if (value || !_wasInstallingDrivers || !_failureReason.empty())
             return;
 
         _wasInstallingDrivers = false;
